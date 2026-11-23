@@ -1,0 +1,31 @@
+{
+  "realm": "apex",
+  "displayName": "Apex Precision Components",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "bruteForceProtected": true,
+  "roles": {
+    "realm": [
+      {"name": "estimator", "description": "Approves quotes up to the limit"},
+      {"name": "senior_estimator", "description": "Approves above the limit, edits policy"},
+      {"name": "planner", "description": "Sees delivery dates and capacity"},
+      {"name": "auditor", "description": "Read-only"},
+      {"name": "admin", "description": "Runs the system; cannot approve quotes"}
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "review-ui",
+      "name": "Apex review UI (S7)",
+      "enabled": true,
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["https://localhost:8448/oauth2/callback"],
+      "webOrigins": ["https://localhost:8448"],
+      "attributes": {"pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "https://localhost:8448/"}
+    }
+  ]
+}

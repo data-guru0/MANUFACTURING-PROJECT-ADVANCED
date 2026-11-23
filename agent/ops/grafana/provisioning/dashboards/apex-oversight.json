@@ -1,0 +1,101 @@
+{
+ "uid": "apex-oversight",
+ "title": "Apex · Human Oversight",
+ "tags": [
+  "apex",
+  "s10"
+ ],
+ "timezone": "browser",
+ "refresh": "1m",
+ "schemaVersion": 39,
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "title": "Decisions per reviewer",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT d.decided_by AS reviewer, count(*) AS decisions, count(*) FILTER (WHERE d.action = 'approve') AS approved,\n                        count(*) FILTER (WHERE d.action IN ('edit', 'reject', 'clarify')) AS changed_or_stopped,\n                        round(percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM d.decided_at - r.updated_at) / 60)::numeric, 1) AS median_wait_min\n                 FROM decisions d JOIN review_items r USING (email_id) WHERE d.decided_by = lower(d.decided_by)\n                   AND d.email_id NOT IN (SELECT email_id FROM canaries) GROUP BY 1 ORDER BY 2 DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 1
+  },
+  {
+   "title": "Canaries caught / missed per reviewer (rubber-stamp check)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT decided_by AS reviewer, count(*) FILTER (WHERE result = 'caught') AS caught, count(*) FILTER (WHERE result = 'missed') AS missed,\n                        count(*) FILTER (WHERE result IS NULL) AS waiting FROM canaries GROUP BY 1 ORDER BY 1",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 2
+  },
+  {
+   "title": "Re-costs and edits by reviewer (field, was, now, why)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 24,
+    "h": 8,
+    "x": 0,
+    "y": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT at, by_user AS reviewer, field, left(old_value::text, 40) AS was, left(new_value::text, 40) AS now, reason FROM feedback ORDER BY at DESC LIMIT 50",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 3
+  }
+ ]
+}

@@ -1,0 +1,49 @@
+# LiteLLM model aliases: the ONLY model names the agent code may use (ADR 0005).
+# Included by agent/ops/litellm/config.yaml. Every model below was verified to exist with
+# GET https://api.groq.com/openai/v1/models on 2026-11-20 (S1). Re-verify before changing.
+# The spec's candidates llama-3.1-8b-instant, llama-4-scout and llama-guard-4 were NOT listed
+# by Groq on that date; the replacements are noted per alias.
+# Two Groq accounts: every alias has a deployment per key (GROQ_API_KEY, GROQ_API_KEY_2). LiteLLM's router spreads calls
+# over both; a 429 (a key's daily quota spent) cools that deployment down and the call is retried on the other key.
+model_list:
+  - model_name: quote-reasoner          # extraction, reconciliation, drafting
+    litellm_params: {model: groq/openai/gpt-oss-120b, api_key: os.environ/GROQ_API_KEY}
+    model_info: {purpose: "extraction, reconciliation, drafting", verified: "2026-11-20"}
+  - model_name: quote-reasoner          # same model, second Groq account
+    litellm_params: {model: groq/openai/gpt-oss-120b, api_key: os.environ/GROQ_API_KEY_2}
+    model_info: {purpose: "extraction, reconciliation, drafting", verified: "2026-11-20"}
+
+  - model_name: quote-reasoner-lite     # fallback for quote-reasoner only (a vetted, smaller model)
+    litellm_params: {model: groq/openai/gpt-oss-20b, api_key: os.environ/GROQ_API_KEY}
+    model_info: {purpose: "fallback for quote-reasoner", verified: "2026-11-20"}
+  - model_name: quote-reasoner-lite          # same model, second Groq account
+    litellm_params: {model: groq/openai/gpt-oss-20b, api_key: os.environ/GROQ_API_KEY_2}
+    model_info: {purpose: "fallback for quote-reasoner", verified: "2026-11-20"}
+
+  - model_name: quote-triage            # classification (spec candidate llama-3.1-8b-instant not available)
+    litellm_params: {model: groq/openai/gpt-oss-20b, api_key: os.environ/GROQ_API_KEY}
+    model_info: {purpose: "email classification", verified: "2026-11-20"}
+  - model_name: quote-triage          # same model, second Groq account
+    litellm_params: {model: groq/openai/gpt-oss-20b, api_key: os.environ/GROQ_API_KEY_2}
+    model_info: {purpose: "email classification", verified: "2026-11-20"}
+
+  - model_name: quote-vision            # scanned drawings; Groq lists it as a PREVIEW model, max 3 images per request
+    litellm_params: {model: groq/qwen/qwen3.8-27b, api_key: os.environ/GROQ_API_KEY}
+    model_info: {purpose: "scanned drawings (vision)", verified: "2026-11-20", preview: true}
+  - model_name: quote-vision          # same model, second Groq account
+    litellm_params: {model: groq/qwen/qwen3.8-27b, api_key: os.environ/GROQ_API_KEY_2}
+    model_info: {purpose: "scanned drawings (vision)", verified: "2026-11-20", preview: true}
+
+  - model_name: quote-guard             # prompt-injection detection
+    litellm_params: {model: groq/meta-llama/llama-prompt-guard-2-86m, api_key: os.environ/GROQ_API_KEY}
+    model_info: {purpose: "injection detection", verified: "2026-11-20"}
+  - model_name: quote-guard          # same model, second Groq account
+    litellm_params: {model: groq/meta-llama/llama-prompt-guard-2-86m, api_key: os.environ/GROQ_API_KEY_2}
+    model_info: {purpose: "injection detection", verified: "2026-11-20"}
+
+  - model_name: quote-safety            # output safety (spec candidate llama-guard-4 not available)
+    litellm_params: {model: groq/openai/gpt-oss-safeguard-20b, api_key: os.environ/GROQ_API_KEY}
+    model_info: {purpose: "output safety", verified: "2026-11-20"}
+  - model_name: quote-safety          # same model, second Groq account
+    litellm_params: {model: groq/openai/gpt-oss-safeguard-20b, api_key: os.environ/GROQ_API_KEY_2}
+    model_info: {purpose: "output safety", verified: "2026-11-20"}

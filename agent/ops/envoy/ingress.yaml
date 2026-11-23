@@ -1,0 +1,236 @@
+# Envoy INGRESS (S1): the only door from the host into the agent stack (ADR 0006 is its mirror).
+# One TLS port per UI, certificate from the lab CA (data/generated/certs/ingress.crt, SAN localhost).
+# S7: the review screen (port 8448) adds Keycloak login (oauth2), JWT checks, a rate limit and ext_authz -> OPA.
+# ponytail: the other UIs keep their own logins behind TLS only; S9 decides which of them go behind Keycloak too.
+# GENERATED layout, edit freely; keep one listener per published port in docker-compose.agent.yml.
+admin:
+  address: {socket_address: {address: 0.0.0.0, port_value: 9901}}
+static_resources:
+  listeners:
+  - name: langfuse
+    address: {socket_address: {address: 0.0.0.0, port_value: 8443}}
+    filter_chains:
+    - transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+          common_tls_context:
+            tls_certificates: [{certificate_chain: {filename: /certs/ingress.crt}, private_key: {filename: /certs/ingress.key}}]
+      filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_langfuse
+          use_remote_address: true
+          upgrade_configs: [{upgrade_type: websocket}]
+          access_log: [{name: envoy.access_loggers.stdout, typed_config: {"@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog}}]
+          http_filters: [{name: envoy.filters.http.router, typed_config: {"@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router}}]
+          route_config:
+            virtual_hosts:
+            - name: langfuse
+              domains: ["*"]
+              routes: [{match: {prefix: "/"}, route: {cluster: langfuse, timeout: 300s}}]
+  - name: grafana
+    address: {socket_address: {address: 0.0.0.0, port_value: 8444}}
+    filter_chains:
+    - transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+          common_tls_context:
+            tls_certificates: [{certificate_chain: {filename: /certs/ingress.crt}, private_key: {filename: /certs/ingress.key}}]
+      filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_grafana
+          use_remote_address: true
+          upgrade_configs: [{upgrade_type: websocket}]
+          access_log: [{name: envoy.access_loggers.stdout, typed_config: {"@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog}}]
+          http_filters: [{name: envoy.filters.http.router, typed_config: {"@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router}}]
+          route_config:
+            virtual_hosts:
+            - name: grafana
+              domains: ["*"]
+              routes: [{match: {prefix: "/"}, route: {cluster: grafana, timeout: 300s}}]
+  - name: keycloak
+    address: {socket_address: {address: 0.0.0.0, port_value: 8445}}
+    filter_chains:
+    - transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+          common_tls_context:
+            tls_certificates: [{certificate_chain: {filename: /certs/ingress.crt}, private_key: {filename: /certs/ingress.key}}]
+      filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_keycloak
+          use_remote_address: true
+          upgrade_configs: [{upgrade_type: websocket}]
+          access_log: [{name: envoy.access_loggers.stdout, typed_config: {"@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog}}]
+          http_filters: [{name: envoy.filters.http.router, typed_config: {"@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router}}]
+          route_config:
+            virtual_hosts:
+            - name: keycloak
+              domains: ["*"]
+              routes: [{match: {prefix: "/"}, route: {cluster: keycloak, timeout: 300s}}]
+  - name: litellm
+    address: {socket_address: {address: 0.0.0.0, port_value: 8446}}
+    filter_chains:
+    - transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+          common_tls_context:
+            tls_certificates: [{certificate_chain: {filename: /certs/ingress.crt}, private_key: {filename: /certs/ingress.key}}]
+      filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_litellm
+          use_remote_address: true
+          upgrade_configs: [{upgrade_type: websocket}]
+          access_log: [{name: envoy.access_loggers.stdout, typed_config: {"@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog}}]
+          http_filters: [{name: envoy.filters.http.router, typed_config: {"@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router}}]
+          route_config:
+            virtual_hosts:
+            - name: litellm
+              domains: ["*"]
+              routes: [{match: {prefix: "/"}, route: {cluster: litellm, timeout: 300s}}]
+  - name: minio
+    address: {socket_address: {address: 0.0.0.0, port_value: 8447}}
+    filter_chains:
+    - transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+          common_tls_context:
+            tls_certificates: [{certificate_chain: {filename: /certs/ingress.crt}, private_key: {filename: /certs/ingress.key}}]
+      filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_minio
+          use_remote_address: true
+          upgrade_configs: [{upgrade_type: websocket}]
+          access_log: [{name: envoy.access_loggers.stdout, typed_config: {"@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog}}]
+          http_filters: [{name: envoy.filters.http.router, typed_config: {"@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router}}]
+          route_config:
+            virtual_hosts:
+            - name: minio
+              domains: ["*"]
+              routes: [{match: {prefix: "/"}, route: {cluster: minio, timeout: 300s}}]
+  # S7: the review screen. Every request passes, in this order:
+  #   1 local rate limit  2 oauth2 (no valid login cookie -> Keycloak login page; sets the cookies, forwards the access
+  #   token as `Authorization: Bearer`)  3 jwt_authn (signature, expiry, issuer against Keycloak's keys; the verified
+  #   claims go to metadata)  4 ext_authz -> OPA apex/ingress/allow (route x role; no answer = 403)  5 the app.
+  - name: review
+    address: {socket_address: {address: 0.0.0.0, port_value: 8448}}
+    filter_chains:
+    - transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+          common_tls_context:
+            tls_certificates: [{certificate_chain: {filename: /certs/ingress.crt}, private_key: {filename: /certs/ingress.key}}]
+      filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_review
+          use_remote_address: true
+          access_log: [{name: envoy.access_loggers.stdout, typed_config: {"@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog}}]
+          http_filters:
+          - name: envoy.filters.http.local_ratelimit
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+              stat_prefix: review_rate_limit
+              # ponytail: one bucket for the whole listener (a few reviewers); per-user limits need the global rate-limit service
+              token_bucket: {max_tokens: 100, tokens_per_fill: 20, fill_interval: 1s}
+              filter_enabled: {runtime_key: review_rl_enabled, default_value: {numerator: 100, denominator: HUNDRED}}
+              filter_enforced: {runtime_key: review_rl_enforced, default_value: {numerator: 100, denominator: HUNDRED}}
+          - name: envoy.filters.http.oauth2
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.oauth2.v3.OAuth2
+              config:
+                token_endpoint: {cluster: keycloak, uri: "http://keycloak:8080/realms/apex/protocol/openid-connect/token", timeout: 5s}
+                authorization_endpoint: https://localhost:8445/realms/apex/protocol/openid-connect/auth
+                end_session_endpoint: https://localhost:8445/realms/apex/protocol/openid-connect/logout
+                redirect_uri: https://localhost:8448/oauth2/callback
+                redirect_path_matcher: {path: {exact: /oauth2/callback}}
+                signout_path: {path: {exact: /signout}}
+                forward_bearer_token: true
+                auth_scopes: [openid, profile, email]
+                # HTMX requests with an expired login get 401 instead of a redirect to Keycloak they can't follow
+                deny_redirect_matcher: [{name: hx-request, string_match: {exact: "true"}}]
+                credentials:
+                  client_id: review-ui
+                  token_secret: {name: review-ui-client-secret}
+                  hmac_secret: {name: review-ui-hmac}
+          - name: envoy.filters.http.jwt_authn
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
+              providers:
+                keycloak:
+                  issuer: https://localhost:8445/realms/apex
+                  remote_jwks:
+                    http_uri: {uri: "http://keycloak:8080/realms/apex/protocol/openid-connect/certs", cluster: keycloak, timeout: 5s}
+                    cache_duration: 300s
+                  forward: true
+                  payload_in_metadata: jwt_payload
+              rules: [{match: {prefix: "/"}, requires: {provider_name: keycloak}}]
+          - name: envoy.filters.http.ext_authz
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+              transport_api_version: V3
+              failure_mode_allow: false
+              grpc_service: {envoy_grpc: {cluster_name: opa_authz}, timeout: 2s}
+              metadata_context_namespaces: [envoy.filters.http.jwt_authn]
+          - name: envoy.filters.http.router
+            typed_config: {"@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router}
+          route_config:
+            virtual_hosts:
+            - name: review
+              domains: ["*"]
+              routes: [{match: {prefix: "/"}, route: {cluster: review_ui, timeout: 60s}}]
+  # Secrets from the environment (docker-compose.agent.yml <- .env), never written into this file.
+  secrets:
+  - name: review-ui-client-secret
+    generic_secret: {secret: {environment_variable: REVIEW_UI_CLIENT_SECRET}}
+  - name: review-ui-hmac
+    generic_secret: {secret: {environment_variable: REVIEW_UI_HMAC_SECRET}}
+  clusters:
+  - name: review_ui
+    type: STRICT_DNS
+    connect_timeout: 5s
+    load_assignment: {cluster_name: review_ui, endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: review-ui, port_value: 8000}}}}]}]}
+  - name: opa_authz
+    type: STRICT_DNS
+    connect_timeout: 2s
+    typed_extension_protocol_options:
+      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+        "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+        explicit_http_config: {http2_protocol_options: {}}
+    load_assignment: {cluster_name: opa_authz, endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: opa, port_value: 9191}}}}]}]}
+  - name: langfuse
+    type: STRICT_DNS
+    connect_timeout: 5s
+    load_assignment: {cluster_name: langfuse, endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: langfuse-web, port_value: 3000}}}}]}]}
+  - name: grafana
+    type: STRICT_DNS
+    connect_timeout: 5s
+    load_assignment: {cluster_name: grafana, endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: grafana, port_value: 3000}}}}]}]}
+  - name: keycloak
+    type: STRICT_DNS
+    connect_timeout: 5s
+    load_assignment: {cluster_name: keycloak, endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: keycloak, port_value: 8080}}}}]}]}
+  - name: litellm
+    type: STRICT_DNS
+    connect_timeout: 5s
+    load_assignment: {cluster_name: litellm, endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: litellm, port_value: 4000}}}}]}]}
+  - name: minio
+    type: STRICT_DNS
+    connect_timeout: 5s
+    load_assignment: {cluster_name: minio, endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: minio, port_value: 9001}}}}]}]}

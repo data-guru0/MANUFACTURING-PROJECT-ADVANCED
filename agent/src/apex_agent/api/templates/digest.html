@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block main %}
+<h1>Weekly digest</h1>
+{% if not d %}<div class="card muted">No digest yet: run <code>python -m apex_agent.governance.digest</code> in the worker.</div>{% else %}
+<div class="card" id="digest">
+  <p class="small muted">Week of {{ d.week }} · written {{ d.created_at }} ·
+    {% if d.faithful %}<span class="badge ok">faithful: every number is a KPI</span>{% else %}<span class="badge bad">NOT faithful: {{ d.unfaithful | join(", ") }}</span>{% endif %}</p>
+  <p style="white-space:pre-wrap">{{ d.narrative }}</p>
+</div>
+<div class="card small"><strong>The KPIs (SQL; the only numbers the text may use)</strong>
+  <table>{% for k, v in d.kpis.items() %}<tr><td>{{ k | replace("_", " ") }}</td><td>{{ v if v is not mapping else v | tojson }}</td></tr>{% endfor %}</table>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,16 @@
+# Material names -> one canonical Odoo material code (W4). HUMAN-REVIEWED lookup table: these are the
+# spellings found in Odoo's x_material_grade, on drawings and on the share during discovery, checked by
+# Ramesh. normalize.py uses this first; anything not listed is matched fuzzily and marked "needs review"
+# in docs/fde/DATA_QUALITY.md until someone adds it here.
+reviewed_by: Ramesh (senior estimator)
+reviewed_on: "2026-11-20"
+materials:
+  MAT-AL6061: ["Al 6061-T6", "AL6061", "6061-T6", "Alu 6061", "6061 T6", "Aluminium 6061", "Aluminium 6061-T6", "AL 6061-T6", "ALUMINIUM 6061-T6"]
+  MAT-AL7075: ["Al 7075-T6", "7075-T6", "AL7075", "Alu 7075", "Aluminium 7075-T6", "ALUMINIUM 7075-T6"]
+  MAT-SS304: ["SS304", "304 SS", "AISI 304", "1.4301", "Stainless 304", "Stainless steel 304", "STAINLESS STEEL 304"]
+  MAT-SS316: ["SS316", "316L", "AISI 316", "1.4401", "SS316L", "Stainless steel 316", "STAINLESS STEEL 316"]
+  MAT-1018: ["Steel 1018", "1018", "C1018", "CRS 1018", "Carbon steel 1018", "STEEL AISI 1018"]
+  MAT-S235: ["Steel S235", "S235JR", "S235", "Mild steel", "Structural steel S235", "STEEL S235JR"]
+  MAT-C360: ["Brass C360", "C360", "CuZn39Pb3", "Brass", "BRASS C360"]
+  MAT-POM: ["POM", "Delrin", "Acetal", "POM-C", "POM (ACETAL)"]
+  MAT-TI64: ["Ti-6Al-4V", "Ti64", "Grade 5 Ti", "Titanium Gr5", "TITANIUM Ti-6Al-4V"]

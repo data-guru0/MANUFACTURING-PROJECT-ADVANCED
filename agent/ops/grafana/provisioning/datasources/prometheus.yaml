@@ -1,0 +1,13 @@
+apiVersion: 1
+# S10: the datasource got a fixed uid (the dashboards reference it). Grafana can't change a provisioned uid in place,
+# so the old one is deleted and recreated on start.
+deleteDatasources:
+  - name: Prometheus
+    orgId: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true

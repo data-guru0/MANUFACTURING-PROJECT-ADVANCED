@@ -1,0 +1,17 @@
+{
+ "run_id": "7a19b0aca1204372babceda6ec8398b2",
+ "scores": {
+  "golden_triage_accuracy": 1.0,
+  "triage_accuracy": 1.0,
+  "injection_recall": 1.0,
+  "extraction_material": 0.958,
+  "extraction_envelope": 1.0,
+  "extraction_quantities": 1.0,
+  "retrieval_top5": 0.975,
+  "price_mdape": 0.1526,
+  "committed_date_met": 0.442,
+  "draft_faithfulness": 1.0,
+  "redteam_injection_flagged": null
+ },
+ "problems": []
+}

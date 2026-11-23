@@ -1,0 +1,12 @@
+{
+ "golden_triage_accuracy": 1.0,
+ "triage_accuracy": 1.0,
+ "injection_recall": 1.0,
+ "extraction_material": 0.958,
+ "extraction_envelope": 1.0,
+ "extraction_quantities": 1.0,
+ "retrieval_top5": 0.975,
+ "price_mdape": 0.154,
+ "committed_date_met": 0.442,
+ "draft_faithfulness": 1.0
+}

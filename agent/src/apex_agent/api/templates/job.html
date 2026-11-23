@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block title %}#{{ mail.id }} · Apex review{% endblock %}
+{% block main %}
+{% set risk = payload.risk or {} %}
+{% set draft = payload.draft or {} %}
+{% set can_decide = me.decides and status.status == "awaiting_review" %}
+<p class="small"><a href="/">← Queue</a></p>
+<h1>#{{ mail.id }} · {{ mail.subject }}</h1>
+<div class="card">
+  <strong>{{ mail.from_name or "" }}</strong> <span class="muted">&lt;{{ mail.from_addr }}&gt;</span> · {{ mail.sent_at }}
+  · status <span class="badge" id="job-status">{{ status.status }}</span>
+  {% if risk %} · route <span class="badge {{ risk.route }}">{{ risk.route }}</span>
+  · value <strong id="job-value">{{ (risk.value_usd or 0) | money }}</strong>
+  {% if risk.needs_senior %} · <span class="badge senior">a senior estimator must approve: {{ risk.senior | join("; ") }}</span>{% endif %}{% endif %}
+  {% if payload.trace_id %} · <a href="https://localhost:8443/project/apex-quoting/traces/{{ payload.trace_id }}" target="_blank" rel="noopener">Langfuse trace</a>{% endif %}
+</div>
+
+<div class="grid">
+  <section>
+    <h2>Drawings</h2>
+    {% for f in files %}
+    <div class="card drawing">
+      <div class="small"><strong>{{ f.filename }}</strong> · {{ f.true_type }} · {{ (f.size / 1024) | round(1) }} KB ·
+        <a href="/jobs/{{ mail.id }}/files/{{ f.id }}" target="_blank" rel="noopener">open</a></div>
+      {# ponytail: the browser's own PDF viewer instead of PDF.js; PDF.js if we need to draw the read values onto the drawing #}
+      {% if f.view == "pdf" %}<iframe src="/jobs/{{ mail.id }}/files/{{ f.id }}" title="{{ f.filename }}"></iframe>
+      {% elif f.view == "dxf" %}<img src="/jobs/{{ mail.id }}/files/{{ f.id }}?svg=true" alt="DXF {{ f.filename }} drawn as SVG">
+      {% elif f.view == "image" %}<img src="/jobs/{{ mail.id }}/files/{{ f.id }}" alt="{{ f.filename }}">
+      {% else %}<p class="muted small">No preview (a 3D model or another format): use “open”.</p>{% endif %}
+    </div>
+    {% else %}<div class="card muted">No attachment passed the security gate.</div>{% endfor %}
+    <h2>The customer's email</h2>
+    <pre class="mail">{{ email_text }}</pre>
+  </section>
+
+  <section>
+    <h2>What was read <span class="muted small">(value · source · confidence; yellow = a person must check)</span></h2>
+    {% for p in extraction.parts or [] %}
+    <div class="card">
+      <h3>{{ p.part_code }} <span class="muted small">quantities {{ p.quantities | join(", ") }} · files {{ p.files | join(", ") }}</span></h3>
+      <table>
+        <tr><th>Field</th><th>Value</th><th>Source</th><th class="num">Conf.</th></tr>
+        {% for name, fact in p.fields.items() %}
+        <tr class="{{ 'needs' if fact.needs_human }}">
+          <td>{{ name }}</td>
+          <td>{% if can_decide %}<input type="text" form="decide" name="f|{{ p.part_code }}|{{ name }}" value="{{ fact.value | js }}" aria-label="{{ p.part_code }} {{ name }}">
+              {% else %}{{ fact.value | js }}{% endif %}
+              {% if fact.note %}<div class="small muted">{{ fact.note }}</div>{% endif %}</td>
+          <td class="small">{{ fact.source }}</td>
+          <td class="num small">{{ "%.2f" | format(fact.confidence) }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+    {% endfor %}
+    {% set req = extraction.requirements or {} %}
+    {% if req %}
+    <div class="card">
+      <h3>From the email</h3>
+      <table>
+        {% for name, fact in req.items() if fact is mapping %}
+        <tr class="{{ 'needs' if fact.needs_human }}"><td>{{ name }}</td><td>{{ fact.value | js }}</td><td class="small">{{ fact.source }}</td>
+          <td class="num small">{{ "%.2f" | format(fact.confidence or 0) }}</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+    {% endif %}
+  </section>
+</div>
+
+<h2>Cost, delivery date and CO₂ <span class="muted small">(calculated by code; every line names its source)</span></h2>
+{% for e in estimates %}
+<div class="card">
+  <h3>{{ e.code }} <span class="muted small">{{ e.part.family }} · {{ e.part.material }}</span></h3>
+  <table>
+    <tr><th class="num">Quantity</th><th class="num">Unit price</th><th class="num">Total</th></tr>
+    {% for b in e.breaks %}<tr><td class="num">{{ b.qty }}</td><td class="num">{{ b.unit_price | money }}</td><td class="num">{{ (b.unit_price * b.qty) | money }}</td></tr>{% endfor %}
+  </table>
+  <details><summary>Cost lines for {{ e.breaks[0].qty }} pcs, with provenance</summary>
+    <table>
+      <tr><th>Line</th><th class="num">$ / part</th><th>Source</th></tr>
+      {% for l in e.breaks[0].lines %}
+      {% set link = source_link(l.provenance or "") %}
+      <tr><td>{{ l.name }}</td><td class="num">{{ "%.2f" | format(l.amount) }}</td>
+        <td class="small">{{ l.provenance }}{% if link %} · <a href="{{ link }}" target="_blank" rel="noopener">source</a>{% endif %}</td></tr>
+      {% endfor %}
+    </table>
+  </details>
+  <h3>Delivery</h3>
+  <p>Committed <strong>{{ e.delivery.committed }}</strong> (P90) · likely {{ e.delivery.p50 }} (P50) · rush {{ e.delivery.rush }} (+{{ e.delivery.rush_premium_pct }} %)
+    · bottleneck <strong>{{ e.delivery.bottleneck }}</strong> · material ready {{ e.delivery.material_ready }}
+    {% if e.delivery.requested %} · customer asked for {{ e.delivery.requested }}{% endif %}</p>
+  <details><summary>Work-center plan</summary>
+    <table><tr><th>Work center</th><th>From</th><th>To</th><th class="num">Minutes</th></tr>
+    {% for st in e.delivery.steps %}<tr><td>{{ st.wc }}</td><td>{{ st["from"] }}</td><td>{{ st.to }}</td><td class="num">{{ st.minutes }}</td></tr>{% endfor %}
+    </table>
+  </details>
+  <h3>CO₂ {% if e.co2.include_in_quote %}<span class="badge">requested: goes in the quote</span>{% else %}<span class="badge">for the reviewer only</span>{% endif %}</h3>
+  <p>{{ e.co2.per_part_kg }} kg CO₂e per part · {{ e.co2.per_lot_kg }} kg per lot</p>
+  <details><summary>CO₂ lines and factor sources</summary>
+    <table><tr><th>Line</th><th class="num">kg CO₂e</th><th>Calculation</th><th>Source</th></tr>
+    {% for c in e.co2.lines %}<tr><td>{{ c.name }}</td><td class="num">{{ c.kg_co2e }}</td><td class="small">{{ c.calc }}</td><td class="small">{{ c.source }} ({{ c.year }}, {{ c.status }})</td></tr>{% endfor %}
+    </table>
+    {% if e.co2.excluded %}<p class="small">Excluded: {{ e.co2.excluded | js }}</p>{% endif %}
+    <p class="small muted">{{ e.co2.methodology }}</p>
+  </details>
+  <h3>Terms</h3>
+  <p>Valid until <strong>{{ e.terms.validity_date }}</strong> ({{ e.terms.why }}). {{ e.terms.clause or "" }}</p>
+  <h3>Analogs</h3>
+  <p class="small">{{ e.analogs.analogs | join(", ") }} · won at {{ e.analogs.won_per_stock_cm3 }} $/cm³ of stock
+    {% if e.analogs.gap_pct is not none %} · this quote {{ "%+.0f" | format(e.analogs.gap_pct) }} %{% endif %}</p>
+  {% for f in e.flags %}<p class="flag">⚠ {{ f }}</p>{% endfor %}
+  {% if can_decide %}<p class="small"><label>Price adjustment % for {{ e.code }} (an override: re-cost with a reason)
+    <input type="text" form="decide" name="f|{{ e.code }}|price_adjust_pct" value="{{ (e.manual_override or {}).get('pct', 0) }}" size="4"></label></p>{% endif %}
+  {% if e.delivery.expected_load_days is defined %}<p class="small">Committed {{ e.delivery.committed }} includes the open quotes'
+    expected load ({{ "%+d" | format(e.delivery.expected_load_days) }} days vs {{ e.delivery.committed_confirmed_only }} against confirmed work only) · <a href="/capacity">capacity</a></p>{% endif %}
+  {% if e.win %}{% set cv = e.win.curve %}
+  <div class="card small" id="win-{{ e.code }}"><strong>Margin vs P(win) vs expected profit</strong> (advisory; the engine's price stands; OPA holds {{ cv.points[0].margin_pct }}–{{ cv.points[-1].margin_pct }} %)
+    {% if not e.win.validated %}<p class="badge bad">NOT validated: model {{ e.win.model }} does not beat the average win rate on the time split
+      (Brier {{ e.win.brier.model }} vs {{ e.win.brier.baseline_average_win_rate }}). Read it as a sketch, not a forecast; the queue priority doesn't use it.</p>{% endif %}
+    {% set W, H, P = 520, 170, 34 %}{% set n = cv.points | length %}{% set maxp = (cv.points | map(attribute="exp_profit") | max) or 1 %}
+    <svg width="{{ W }}" height="{{ H }}" role="img" aria-label="margin curve">
+      <rect x="0" y="0" width="{{ W }}" height="{{ H }}" fill="#fff"/>
+      <polyline fill="none" stroke="#1f5fbf" stroke-width="2" points="{% for pt in cv.points %}{{ P + loop.index0 * (W - 2 * P) / (n - 1) }},{{ H - P - pt.p_win * (H - 2 * P) }} {% endfor %}"/>
+      <polyline fill="none" stroke="#16794c" stroke-width="2" stroke-dasharray="5 3" points="{% for pt in cv.points %}{{ P + loop.index0 * (W - 2 * P) / (n - 1) }},{{ H - P - pt.exp_profit / maxp * (H - 2 * P) }} {% endfor %}"/>
+      {% for pt in cv.points %}{% if pt.margin_pct == cv.best.margin_pct %}<circle cx="{{ P + loop.index0 * (W - 2 * P) / (n - 1) }}" cy="{{ H - P - pt.exp_profit / maxp * (H - 2 * P) }}" r="5" fill="#16794c"/>{% endif %}{% endfor %}
+      <text x="{{ P }}" y="{{ H - 8 }}" font-size="11">{{ cv.points[0].margin_pct }} %</text><text x="{{ W - P - 20 }}" y="{{ H - 8 }}" font-size="11">{{ cv.points[-1].margin_pct }} %</text>
+      <text x="{{ W / 2 - 20 }}" y="{{ H - 8 }}" font-size="11">margin</text>
+      <text x="{{ P }}" y="14" font-size="11" fill="#1f5fbf">— P(win)</text><text x="{{ P + 80 }}" y="14" font-size="11" fill="#16794c">- - expected profit</text>
+    </svg>
+    <p>Engine price ${{ "%.2f" | format(cv.quoted.price) }} (margin {{ cv.quoted.margin_pct }} %): P(win) {{ "%.0f" | format(100 * cv.quoted.p_win) }} %, expected profit ${{ "{:,.0f}".format(cv.quoted.exp_profit) }}
+      · curve's best: margin {{ cv.best.margin_pct }} % → ${{ "%.2f" | format(cv.best.price) }}, P(win) {{ "%.0f" | format(100 * cv.best.p_win) }} %, expected profit ${{ "{:,.0f}".format(cv.best.exp_profit) }}</p>
+  </div>{% endif %}
+  {% if e.dfm and e.dfm.suggestions %}
+  <div class="card small" id="dfm-{{ e.code }}"><strong>DFM suggestions</strong> (optional alternate lines; the quote above is the customer's drawing as specified)
+    {% for d in e.dfm.suggestions %}<p>{% if d.offered %}<span class="badge">offered</span>{% else %}<span class="muted">not offered</span>{% endif %}
+      <strong>{{ d.rule | replace("_", " ") }}</strong>: {{ d.field }} {{ d.old }}{% if d.new is not none %} → {{ d.new }}{% endif %}
+      {% if d.saving_per_unit is defined %} · ${{ "%.2f" | format(d.alt_unit_price) }} instead of ${{ "%.2f" | format(e.breaks[0].unit_price) }}
+        (saves ${{ "%.2f" | format(d.saving_per_unit) }} = {{ d.saving_pct }} % at qty {{ d.qty }}, engine re-run){% else %} · {{ d.not_priced }}{% endif %}
+      <br><span class="muted">{{ d.why }}</span></p>{% endfor %}
+    {% if e.dfm.not_checked %}<p class="muted">Not checked: {{ e.dfm.not_checked | join("; ") }}</p>{% endif %}
+  </div>{% endif %}
+  {% if e.repeat %}{% set r = e.repeat %}
+  <div class="card small" id="repeat-{{ e.code }}"><strong>{{ "REPEAT" if r.kind == "repeat" else "REVISION" }} of {{ r.of }}</strong>
+    · {{ r.why }} · {{ r.history }}
+    <p>Old: {{ "$%.2f" | format(r.old_unit_price) if r.old_unit_price is not none else "n/a" }}{% if r.old_qty %} (qty {{ r.old_qty }}){% endif %}
+      → today: <strong>${{ "%.2f" | format(r.new_unit_price) }}</strong> (qty {{ r.new_qty }}){% if r.change_pct is not none %} · {{ "%+.1f" | format(r.change_pct) }} %{% endif %}</p>
+    {% for x in r.reasons %}<p>· {{ x }}</p>{% endfor %}
+    {% if r.changes %}<p><strong>What changed:</strong> {% for c in r.changes %}{{ c.field }} {{ c.old }} → {{ c.new }}{% if not loop.last %}; {% endif %}{% endfor %}</p>{% endif %}
+    {% if r.summary %}<p><strong>AI summary of the diff:</strong> {{ r.summary }}</p>{% endif %}
+    {% if r.change_cost %}<p><strong>Cost of the change:</strong> {{ "%+.2f" | format(r.change_cost.per_unit) }} $/unit
+      ({% for n, d in r.change_cost.lines.items() %}{{ n }} {{ "%+.2f" | format(d) }}{% if not loop.last %}, {% endif %}{% endfor %}){% if r.old_plus_change %} · old price + change = ${{ "%.2f" | format(r.old_plus_change) }}{% endif %}</p>{% endif %}
+    {% if r.pixels and r.pixels.highlight_png_b64 %}<p>Drawing diff ({{ r.pixels.changed_pct }} % of pixels, red = changed):</p>
+      <img alt="pixel diff" style="max-width:100%;border:1px solid #ccc" src="data:image/png;base64,{{ r.pixels.highlight_png_b64 }}">{% elif r.pixels and r.pixels.skipped %}<p class="muted">{{ r.pixels.skipped }}</p>{% endif %}
+  </div>{% endif %}
+</div>
+{% else %}<div class="card muted">Nothing was costed for this job.</div>{% endfor %}
+
+{% if payload.risk and payload.risk.priority %}
+<div class="card small" id="priority"><strong>Priority:</strong> {{ payload.risk.priority.explain }}
+  · P(win) from {{ payload.risk.priority.p_win_basis }}{% if payload.risk.priority.days_to_requested is not none %} · requested in {{ payload.risk.priority.days_to_requested }} days{% endif %}</div>
+{% endif %}
+
+{% if supplier_rfqs %}
+<h2>Supplier RFQs <span class="muted small">(stale prices or short material; only what the supplier needs; each send approved by a person)</span></h2>
+<div class="card small" id="suppliers">
+  {% for r in supplier_rfqs %}
+  <div class="supplier-rfq" style="border-top:1px solid var(--line);padding:6px 0">
+    <strong>{{ r.code }} → {{ r.vendor_name }}</strong> &lt;{{ r.vendor_email }}&gt;
+    <span class="badge {{ 'bad' if r.status == 'blocked' else 'ok' if r.status in ('replied',) else '' }}">{{ r.status }}</span>
+    {% if r.approved_by %}<span class="muted">approved by {{ r.approved_by }}</span>{% endif %}
+    {% if r.due_at and r.status == 'sent' %}<span class="muted">· reply due {{ r.due_at.strftime("%Y-%m-%d %H:%M") }}</span>{% endif %}
+    {% for b in r.blocked or [] %}<p class="flag">blocked: {{ b }}</p>{% endfor %}
+    <p class="muted">why: {{ (r.need.why or []) | join("; ") }}</p>
+    <details><summary>{{ r.subject }}</summary><pre style="white-space:pre-wrap">{{ r.body }}</pre></details>
+    {% if r.attachment %}<p><a href="/jobs/{{ mail.id }}/suppliers/{{ r.id }}/drawing" target="_blank">Redacted drawing (what the supplier gets)</a>
+      · checked {{ r.redaction.secrets_checked }} names/addresses, leaks: {{ r.redaction.leaks | length }}</p>{% endif %}
+    {% if r.quote and r.quote.lines is defined %}<p>Offer: {% for ln in r.quote.lines %}{{ ln.code }} ${{ "%.2f" | format(ln.unit_price_usd) }}/{{ ln.unit }}, {{ ln.lead_days }} days
+      <span class="muted">(“{{ ln.source_text }}”)</span>{% if not loop.last %}; {% endif %}{% else %}{% if r.quote.declined %}declined{% else %}no proven line{% endif %}{% endfor %}</p>{% endif %}
+    {% if r.quote and r.quote.settled %}<p><strong>{% if r.quote.chosen %}Chosen: {{ r.quote.chosen.vendor }} ${{ "%.2f" | format(r.quote.chosen.unit_price_usd) }}
+      → Odoo price list (valid {{ r.quote.odoo_price.valid_from }}) and draft {{ r.quote.odoo_po.name }}{% else %}{{ r.quote.why }}{% endif %}</strong></p>{% endif %}
+    {% if r.status == 'draft' %}<form hx-post="/jobs/{{ mail.id }}/suppliers/{{ r.id }}/send" hx-target="next .send-result" hx-swap="innerHTML" style="display:inline">
+      <button type="submit">Approve &amp; send</button></form><span class="send-result"></span>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if estimates %}
+<h2>What if…? <span class="muted small">(read-only assistant: it recomputes, it can't approve, edit or send)</span></h2>
+{% if me.decides %}
+<div class="card" id="whatif">
+  <form hx-post="/jobs/{{ mail.id }}/whatif" hx-target="#whatif-answers" hx-swap="afterbegin" hx-disabled-elt="find button">
+    <input type="hidden" name="session" value="{{ whatif_session }}">
+    <input type="text" name="question" placeholder="e.g. What would 500 pieces cost? And at ±0.1 mm?" style="width:70%">
+    <button type="submit">Ask</button> <span class="htmx-indicator muted small">thinking…</span>
+  </form>
+  <div id="whatif-answers"></div>
+</div>
+{% else %}
+<div class="card muted" id="whatif">The assistant is for estimators: it spends an LLM budget. Your role ({{ me.roles | join(", ") }}) can't ask it, and OPA's ingress policy refuses a hand-made request too.</div>
+{% endif %}
+{% endif %}
+
+<h2>Risk and the draft reply</h2>
+<div class="card">
+  {% if risk.reply %}{% set rp = risk.reply %}
+  <div class="card small" id="reply"><strong>{{ {"reply_accept": "ACCEPTED", "reply_accept_late": "ACCEPTED LATE: re-priced",
+      "reply_negotiate": "NEGOTIATION", "reply_question": "QUESTION", "followup": "FOLLOW-UP " ~ (rp.followup or "")}.get(risk.route, risk.route) }}</strong>
+    · quotation {{ rp.quotation }}{% if rp.odoo_state %} (Odoo: {{ rp.odoo_state }}{% if rp.validity_date %}, valid until {{ rp.validity_date }}{% endif %}){% endif %}
+    {% if rp.sent %} · sent {{ rp.sent }}, no reply since{% endif %}
+    {% if rp.detail %}<p>Customer: “{{ rp.detail }}”</p>{% endif %}
+    {% for x in rp.late or [] %}<p class="flag">late: {{ x }}</p>{% endfor %}
+    {% if rp.reprice %}<table><tr><th>Part</th><th class="num">Qty</th><th class="num">Quoted</th><th class="num">Today</th><th class="num">Change</th></tr>
+      {% for ln in rp.reprice %}<tr><td>{{ ln.code }}</td><td class="num">{{ ln.qty }}</td><td class="num">{{ "%.2f" | format(ln.old_unit_price) if ln.old_unit_price is not none else "" }}</td>
+        <td class="num">{{ "%.2f" | format(ln.new_unit_price) if ln.new_unit_price is defined else ln.error }}</td>
+        <td class="num">{{ "%+.1f %%" | format(ln.change_pct) if ln.change_pct is not none else "" }}</td></tr>{% endfor %}</table>{% endif %}
+    {% for code, cv in (rp.curves or {}).items() %}<p>{{ code }}: engine price ${{ "%.2f" | format(cv.quoted.price) }} (margin {{ cv.quoted.margin_pct }} %), P(win) {{ "%.0f" | format(100 * cv.quoted.p_win) }} %
+      · OPA allows {{ cv.points[0].margin_pct }}–{{ cv.points[-1].margin_pct }} % · curve: see the RFQ's job page</p>{% endfor %}
+  </div>{% endif %}
+  {% if risk.route == "no_bid" %}<p class="badge bad" id="nobid">NO BID: Apex can't make this part. The draft below is a polite decline (it still needs your approval).</p>{% endif %}
+  {% for x in risk.conditions or [] %}<p class="flag">condition: {{ x }}</p>{% endfor %}
+  {% for x in risk.escalate or [] %}<p class="badge escalate">escalate: {{ x }}</p> {% endfor %}
+  {% for x in risk.senior or [] %}<p class="badge senior">senior: {{ x }}</p> {% endfor %}
+  {% for x in risk.check or [] %}<p class="flag">verify: {{ x }}</p>{% endfor %}
+  {% for x in risk.not_costed or [] %}<p class="flag">not costed: {{ x }}</p>{% endfor %}
+  {% for x in risk.needs_human or [] %}<p class="flag">check: {{ x | js }}</p>{% endfor %}
+  {% if draft.skipped %}<p class="flag">{{ draft.skipped }}</p>{% endif %}
+  <p>Faithfulness: {% if draft.faithful %}<span class="badge ok">every number is in the calculation</span>
+     {% else %}<span class="badge bad">NOT faithful: {{ draft.unfaithful_numbers | default([]) | join(", ") }}</span>{% endif %}</p>
+  <div class="grid">
+    <div><h3>To the customer ({{ (extraction.requirements or {}).get("reply_language", "en") }})</h3><p><strong>{{ draft.subject }}</strong></p><pre class="mail" id="draft-text">{{ draft.customer_language_text }}</pre></div>
+    <div><h3>English copy (for you)</h3><pre class="mail">{{ draft.english_text }}</pre></div>
+  </div>
+</div>
+
+{% if can_decide %}
+<h2>Your decision</h2>
+<div class="card">
+  <form id="decide" hx-post="/jobs/{{ mail.id }}/decide" hx-target="#result" hx-swap="outerHTML">
+    <label>Reason (required except to approve)<input type="text" name="reason" id="reason" maxlength="500"></label>
+    <details><summary>Edit the email before approving</summary>
+      <textarea name="text" id="edit-text">{{ draft.customer_language_text }}</textarea>
+    </details>
+    <div class="actions">
+      <button name="action" value="approve">Approve</button>
+      <button name="action" value="edit" class="secondary">Edit &amp; approve</button>
+      <button name="action" value="recost" class="secondary" title="Uses the values you changed in “What was read”">Re-cost with my field changes</button>
+      <button name="action" value="clarify" class="secondary">Ask the customer (clarify)</button>
+      <button name="action" value="reject" class="secondary">Reject</button>
+    </div>
+  </form>
+  <div id="result"></div>
+</div>
+{% elif status.status in ("decided", "running") %}
+<div class="card"><div id="result" hx-get="/jobs/{{ mail.id }}/status" hx-trigger="load" hx-swap="outerHTML"></div></div>
+{% elif not me.decides %}
+<div class="card muted">Your role ({{ me.roles | join(", ") }}) can see this job but not decide it.</div>
+{% endif %}
+
+<h2>Who did what</h2>
+<div class="card">
+  {% if decision %}<p><strong>{{ decision.action }}</strong> by <strong>{{ decision.decided_by }}</strong> at {{ decision.decided_at.strftime("%Y-%m-%d %H:%M:%S") }}{% if decision.reason %}: “{{ decision.reason }}”{% endif %}</p>{% endif %}
+  {% for a in acted %}{% set r = a.result %}
+  <p id="acted">Sent at {{ a.at.strftime("%Y-%m-%d %H:%M:%S") }}:
+    {% if r.quotation %}Odoo draft quotation <strong>{{ r.quotation }}</strong> (with the drawings and the quote PDF, {{ (r.pdf_bytes / 1024) | round(1) }} KB) · {% endif %}
+    reply from rfq@ <code>{{ r.message_id }}</code></p>
+  {% endfor %}
+  {% if outcome %}<p>Outcome in Odoo: <strong>{{ outcome.quotation }}</strong> is <span class="badge {{ 'ok' if outcome.outcome == 'won' else ('bad' if outcome.outcome == 'lost' else '') }}">{{ outcome.outcome }}</span> ({{ outcome.state }}{% if outcome.lost_reason %}: {{ outcome.lost_reason }}{% endif %}), seen {{ outcome.changed_at.strftime("%Y-%m-%d %H:%M") }}</p>{% endif %}
+  {% if edits %}
+  <table><tr><th>When</th><th>Who</th><th>Field</th><th>Was</th><th>Now</th><th>Why</th></tr>
+  {% for x in edits %}<tr><td class="small">{{ x.at.strftime("%Y-%m-%d %H:%M:%S") }}</td><td>{{ x.by_user }}</td><td>{{ x.field }}</td>
+    <td class="small">{{ x.old_value | js | truncate(120) }}</td><td class="small">{{ x.new_value | js | truncate(120) }}</td><td>{{ x.reason }}</td></tr>{% endfor %}
+  </table>
+  {% elif not decision %}<p class="muted">No decision or edit yet.</p>{% endif %}
+  {% if decision and not acted and decision.action != "reject" and status.status in ("done", "sent") %}<p class="muted">Nothing was sent for this decision.</p>{% endif %}
+</div>
+{% endblock %}

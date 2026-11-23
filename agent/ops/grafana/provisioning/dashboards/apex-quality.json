@@ -1,0 +1,191 @@
+{
+ "uid": "apex-quality",
+ "title": "Apex · AI Quality",
+ "tags": [
+  "apex",
+  "s10"
+ ],
+ "timezone": "browser",
+ "refresh": "1m",
+ "schemaVersion": 39,
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "title": "Latest evaluation scores (make evals)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 10,
+    "x": 0,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT DISTINCT ON (metric) metric, round(value::numeric, 3) AS value, passed AS run_passed, at\n                 FROM eval_runs ORDER BY metric, at DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 1
+  },
+  {
+   "title": "Evaluation scores over time",
+   "type": "timeseries",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 10,
+    "x": 12,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT at AS time, metric, value FROM eval_runs WHERE $__timeFilter(at) ORDER BY at",
+     "format": "time_series",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 2
+  },
+  {
+   "title": "Drafts whose every number is in the calculation (faithful), %",
+   "type": "stat",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 6,
+    "h": 8,
+    "x": 0,
+    "y": 10
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT round(100 * avg(((payload->'draft'->>'faithful')::boolean)::int), 1) FROM review_items\n                 WHERE payload->'draft'->>'mode' = 'quote' AND email_id NOT IN (SELECT email_id FROM canaries)",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "id": 3
+  },
+  {
+   "title": "Values read with low confidence per RFQ (avg)",
+   "type": "stat",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 6,
+    "h": 8,
+    "x": 6,
+    "y": 10
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT round(avg(jsonb_array_length(coalesce(result->'needs_human', '[]'::jsonb))), 2) FROM extractions",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 4
+  },
+  {
+   "title": "Routes: quote / clarify / escalate",
+   "type": "piechart",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 6,
+    "h": 8,
+    "x": 12,
+    "y": 10
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT route AS metric, count(*) AS jobs FROM review_items WHERE email_id NOT IN (SELECT email_id FROM canaries) GROUP BY route",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 5
+  },
+  {
+   "title": "Human edits per field (what the AI gets wrong)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 6,
+    "h": 8,
+    "x": 18,
+    "y": 10
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT regexp_replace(field, '^[^.]+\\.', '') AS field, count(*) AS edits FROM feedback GROUP BY 1 ORDER BY 2 DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 6
+  }
+ ]
+}

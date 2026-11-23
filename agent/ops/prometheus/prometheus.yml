@@ -1,0 +1,13 @@
+# S1 scrape targets; S10 adds the agent's own metrics and the dashboards.
+global: {scrape_interval: 15s}
+scrape_configs:
+  - job_name: envoy-ingress
+    metrics_path: /stats/prometheus
+    static_configs: [{targets: ["envoy-ingress:9901"]}]
+  - job_name: envoy-egress
+    metrics_path: /stats/prometheus
+    static_configs: [{targets: ["envoy-egress:9901"]}]
+  - job_name: opa
+    static_configs: [{targets: ["opa:8181"]}]
+  - job_name: prometheus
+    static_configs: [{targets: ["localhost:9090"]}]

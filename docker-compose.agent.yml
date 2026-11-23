@@ -1,0 +1,518 @@
+# The FDE solution: the agent platform, LAYERED on the legacy stack:
+#   docker compose -p apex -f docker-compose.legacy.yml -f docker-compose.agent.yml up -d --wait
+# The legacy stack never depends on anything in this file (make demo-legacy works without it).
+#
+# Networks (ARCHITECTURE.md §3):
+#   edge    envoy-ingress only; the single door from the host (127.0.0.1 ports 8443-8447)
+#   app     internal: services that talk to each other (no internet)
+#   data    internal: databases and object store (no internet)
+#   egress  internal: the ONLY clients allowed out (litellm, clamav) <-> envoy-egress
+#   outbound  envoy-egress's own route to the internet; nothing else is on it
+#   default the legacy stack's network ("legacy"); agent services join it from S2 (MCP servers, ingest)
+#
+# ponytail: images pinned by version tag; S19 pins by digest and scans them with trivy.
+name: apex
+
+x-healthcheck: &hc
+  interval: 5s
+  timeout: 5s
+  retries: 60
+  start_period: 10s
+
+services:
+  app-postgres:
+    image: pgvector/pgvector:0.8.7-pg17-trixie
+    environment:
+      POSTGRES_PASSWORD: ${APP_PG_PASSWORD:?run make secrets}
+      APEX_DB_PASSWORD: ${APEX_DB_PASSWORD:?run make secrets}
+      LITELLM_DB_PASSWORD: ${LITELLM_DB_PASSWORD:?run make secrets}
+      LANGFUSE_DB_PASSWORD: ${LANGFUSE_DB_PASSWORD:?run make secrets}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?run make secrets}
+      TZ: UTC
+    volumes:
+      - app-pg:/var/lib/postgresql/data
+      - ./agent/ops/postgres/init.sh:/docker-entrypoint-initdb.d/10-apex.sh:ro
+    networks: [data]
+    healthcheck: {<<: *hc, test: ["CMD-SHELL", "pg_isready -U postgres -d apex"]}
+    restart: unless-stopped
+
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse /data/apex && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: apex-admin
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?run make secrets}
+      MINIO_BROWSER_REDIRECT_URL: https://localhost:8447
+    volumes: [minio:/data]
+    networks: [data, app]
+    healthcheck: {<<: *hc, test: ["CMD", "mc", "ready", "local"]}
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?run make secrets}", "--maxmemory-policy", "noeviction"]
+    networks: [data]
+    healthcheck: {<<: *hc, test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?run make secrets}
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.3.62.3
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?run make secrets}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+    networks: [data]
+    healthcheck: {<<: *hc, test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]}
+    restart: unless-stopped
+
+  opa:
+    # S7: the same OPA build plus its Envoy plugin, so it also answers Envoy's ext_authz (gRPC :9191) for the review
+    # screen's front door (apex/ingress/allow). One OPA, one set of policies.
+    image: openpolicyagent/opa:1.22.4-envoy-static
+    # S9: --authorization=basic: system.authz lets services ASK (POST /v1/data) but never write rules or data;
+    #     decision logs on stdout (Docker Desktop -> Logs), with tokens and headers masked by system.log.
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "--log-level=info", "--authorization=basic", "--set=decision_logs.console=true",
+              "--set=plugins.envoy_ext_authz_grpc.addr=:9191", "--set=plugins.envoy_ext_authz_grpc.path=apex/ingress/allow",  # gitleaks:allow (an OPA flag, not a secret)
+              "/policy/rego", "/policy/data"]
+    environment:
+      APEX_APPROVAL_KEY: ${APPROVAL_SIGNING_KEY:?run make secrets}   # S8: actions.rego verifies the review screen's approvals
+    volumes:
+      - ./agent/policy/rego:/policy/rego:ro
+      - ./agent/config/policy.yaml:/policy/data/policy/data.yaml:ro
+    networks: [app]
+    # ponytail: the static image has no shell or HTTP client, so this only proves the binary runs;
+    # the platform test asks OPA a real question over HTTP.
+    healthcheck: {<<: *hc, test: ["CMD", "/opa", "version"]}
+    restart: unless-stopped
+
+  litellm:
+    image: ghcr.io/berriai/litellm-non_root:v1.108.13
+    command: ["--config", "/app/apex/config.yaml", "--port", "4000"]
+    environment:
+      GROQ_API_KEY: ${GROQ_API_KEY:?paste your Groq key into .env}
+      GROQ_API_KEY_2: ${GROQ_API_KEY_2:?paste your second Groq account's key into .env}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?run make secrets}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:?run make secrets}
+      DATABASE_URL: postgresql://litellm:${LITELLM_DB_PASSWORD}@app-postgres:5432/litellm
+      UI_USERNAME: admin
+      UI_PASSWORD: ${LITELLM_UI_PASSWORD:?run make secrets}
+      LANGFUSE_HOST: http://langfuse-web:3000
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?run make secrets}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?run make secrets}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?run make secrets}   # S9: the response cache
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"   # use the bundled price list; don't fetch it from GitHub
+      # Out to the internet ONLY through the egress allow-list; everything internal goes direct.
+      HTTPS_PROXY: http://envoy-egress:10000
+      AIOHTTP_TTL_DNS_CACHE: "10"   # default 300 s: when compose recreates envoy-egress (new IP), every Groq call failed for 5 min
+      FORWARDED_ALLOW_IPS: "*"   # trust Envoy ingress's X-Forwarded-Proto (no published port), so /ui redirects to https, not http
+      HTTP_PROXY: http://envoy-egress:10000
+      NO_PROXY: localhost,127.0.0.1,langfuse-web,app-postgres,opa,redis
+    volumes:
+      - ./agent/ops/litellm/config.yaml:/app/apex/config.yaml:ro
+      - ./agent/config/models.yaml:/app/apex/models.yaml:ro
+      - ./agent/ops/litellm/apex_guardrails.py:/app/apex/apex_guardrails.py:ro   # S9: guardrails callback
+      - ./agent/config/agents.yaml:/app/apex/agents.yaml:ro                      # S9: the registry's max_tokens
+    networks: [app, data, egress]
+    depends_on:
+      app-postgres: {condition: service_healthy}
+      envoy-egress: {condition: service_healthy}
+      langfuse-web: {condition: service_healthy}
+    healthcheck: {<<: *hc, test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=3)\""]}
+    restart: unless-stopped
+
+  langfuse-worker:
+    image: docker.langfuse.com/langfuse/langfuse-worker:4.82.0
+    environment: &langfuse-env
+      HOSTNAME: 0.0.0.0   # listen on all interfaces (the default is the container's hostname only)
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_DB_PASSWORD}@app-postgres:5432/langfuse
+      NEXTAUTH_URL: https://localhost:8443
+      SALT: ${LANGFUSE_SALT:?run make secrets}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?run make secrets}
+      TELEMETRY_ENABLED: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?run make secrets}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: apex-admin
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?run make secrets}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: apex-admin
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?run make secrets}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: ${REDIS_PASSWORD:?run make secrets}
+    networks: [data, app]
+    depends_on: &langfuse-deps
+      app-postgres: {condition: service_healthy}
+      minio: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+    healthcheck: {<<: *hc, test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3030/api/health"]}
+    restart: unless-stopped
+
+  langfuse-web:
+    image: docker.langfuse.com/langfuse/langfuse:4.82.0
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?run make secrets}
+      LANGFUSE_INIT_ORG_ID: apex
+      LANGFUSE_INIT_ORG_NAME: Apex Precision Components
+      LANGFUSE_INIT_PROJECT_ID: apex-quoting
+      LANGFUSE_INIT_PROJECT_NAME: Apex quoting agent
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?run make secrets}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?run make secrets}
+      LANGFUSE_INIT_USER_EMAIL: admin@apex.local
+      LANGFUSE_INIT_USER_NAME: Apex Admin
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_ADMIN_PASSWORD:?run make secrets}
+      AUTH_DISABLE_SIGNUP: "true"
+    networks: [data, app]
+    depends_on: *langfuse-deps
+    healthcheck: {<<: *hc, test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/public/health"]}
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    command: ["start", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://app-postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?run make secrets}
+      KC_HOSTNAME: https://localhost:8445
+      KC_HTTP_ENABLED: "true"       # TLS ends at envoy-ingress
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?run make secrets}
+    volumes:
+      - ./agent/ops/keycloak/apex-realm.json:/opt/keycloak/data/import/apex-realm.json:ro
+    networks: [app, data]
+    depends_on:
+      app-postgres: {condition: service_healthy}
+    healthcheck:
+      <<: *hc
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000; printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '\"UP\"' <&3"]
+    restart: unless-stopped
+
+  envoy-egress:
+    image: envoyproxy/envoy:v1.40.2
+    command: ["-c", "/etc/envoy/egress.yaml"]
+    volumes: ["./agent/ops/envoy/egress.yaml:/etc/envoy/egress.yaml:ro"]
+    networks: [egress, outbound, app]
+    healthcheck: {<<: *hc, test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/10000'"]}
+    restart: unless-stopped
+
+  envoy-ingress:
+    image: envoyproxy/envoy:v1.40.2
+    command: ["-c", "/etc/envoy/ingress.yaml"]
+    ports:
+      - "127.0.0.1:8443:8443"   # Langfuse
+      - "127.0.0.1:8444:8444"   # Grafana
+      - "127.0.0.1:8445:8445"   # Keycloak
+      - "127.0.0.1:8446:8446"   # LiteLLM (API + admin UI)
+      - "127.0.0.1:8447:8447"   # MinIO console
+      - "127.0.0.1:8448:8448"   # S7: the review screen (Keycloak login, JWT, OPA per route, rate limit)
+    environment:
+      # the review-ui client's secret (Keycloak) and the key that signs Envoy's login cookies; read by ingress.yaml
+      REVIEW_UI_CLIENT_SECRET: ${REVIEW_UI_CLIENT_SECRET:?run make secrets}
+      REVIEW_UI_HMAC_SECRET: ${REVIEW_UI_HMAC_SECRET:?run make secrets}
+    volumes:
+      - ./agent/ops/envoy/ingress.yaml:/etc/envoy/ingress.yaml:ro
+      - ./data/generated/certs/ingress.crt:/certs/ingress.crt:ro
+      - ./data/generated/certs/ingress.key:/certs/ingress.key:ro
+    networks: [edge, app]
+    healthcheck: {<<: *hc, test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/8446'"]}
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.16.0
+    volumes: ["./agent/ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro", "prometheus:/prometheus"]
+    networks: [app]
+    healthcheck: {<<: *hc, test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/ready"]}
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.1.10
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?run make secrets}
+      GF_SERVER_ROOT_URL: https://localhost:8444
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:?run make secrets}   # S3: read-only role grafana_ro (triage tables)
+    volumes: ["./agent/ops/grafana/provisioning:/etc/grafana/provisioning:ro", "grafana:/var/lib/grafana"]
+    networks: [app, data]
+    healthcheck: {<<: *hc, test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]}
+    restart: unless-stopped
+
+  clamav:
+    image: clamav/clamav:1.4.7-debian13-slim
+    volumes:
+      - ./agent/ops/clamav/freshclam.conf:/etc/clamav/freshclam.conf:ro
+      - clamav:/var/lib/clamav
+    networks: [app, egress]
+    healthcheck: {<<: *hc, retries: 180, test: ["CMD", "clamdcheck.sh"]}
+    restart: unless-stopped
+
+  # ---- S2: MCP tool servers (ADR 0003). Each has ONE scoped credential and asks OPA before every tool.
+  #      They join the legacy network to reach Odoo / the share; nothing publishes a port.
+  erp-mcp-read:
+    build: ./agent
+    image: apex/agent:local
+    command: ["python", "-m", "apex_agent.mcp_servers.erp_read"]
+    environment: &mcp-odoo
+      APEX_MCP_OPA_URL: http://opa:8181
+      APEX_AUDIT_DB_URL: postgresql://apex_audit:${AUDIT_DB_PASSWORD:?run make secrets}@app-postgres:5432/apex
+      APEX_SERVICE: erp-mcp-read
+      APEX_ODOO_URL: http://odoo:8069
+      APEX_ODOO_LOGIN: erp_reader
+      APEX_ODOO_PASSWORD: ${ODOO_READER_PASSWORD:?run make secrets}
+    networks: [app, data, default]   # data: only for its INSERT-only audit role (S9)
+    depends_on: {opa: {condition: service_healthy}}
+    healthcheck: &mcp-health {<<: *hc, test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 3)"]}
+    restart: unless-stopped
+
+  erp-mcp-write:
+    image: apex/agent:local
+    command: ["python", "-m", "apex_agent.mcp_servers.erp_write"]
+    environment:
+      APEX_MCP_OPA_URL: http://opa:8181
+      APEX_AUDIT_DB_URL: postgresql://apex_audit:${AUDIT_DB_PASSWORD:?run make secrets}@app-postgres:5432/apex
+      APEX_SERVICE: erp-mcp-write
+      APEX_ODOO_URL: http://odoo:8069
+      APEX_ODOO_LOGIN: erp_integration
+      APEX_ODOO_PASSWORD: ${ODOO_INTEGRATION_PASSWORD:?run make secrets}
+    networks: [app, data, default]   # data: only for its INSERT-only audit role (S9)
+    depends_on: {opa: {condition: service_healthy}, erp-mcp-read: {condition: service_started}}
+    healthcheck: *mcp-health
+    restart: unless-stopped
+
+  share-mcp:
+    image: apex/agent:local
+    command: ["python", "-m", "apex_agent.mcp_servers.share"]
+    environment:
+      APEX_MCP_OPA_URL: http://opa:8181
+      APEX_AUDIT_DB_URL: postgresql://apex_audit:${AUDIT_DB_PASSWORD:?run make secrets}@app-postgres:5432/apex
+      APEX_SERVICE: share-mcp
+      APEX_SHARE_SERVER: fileserver
+      APEX_SHARE_USER: agent-ro
+      APEX_SHARE_PASSWORD: ${FILESHARE_AGENT_PASSWORD:?run make secrets}
+    networks: [app, data, default]   # data: only for its INSERT-only audit role (S9)
+    depends_on: {opa: {condition: service_healthy}, erp-mcp-read: {condition: service_started}}
+    healthcheck: *mcp-health
+    restart: unless-stopped
+
+  # ---- S8: mail-mcp, the ONLY way the agent sends email (as rfq@, with its own Dovecot master login). Its one tool
+  #      needs OPA's tool policy (node act) AND the person's signed approval of exactly that email (apex/actions).
+  mail-mcp:
+    image: apex/agent:local
+    command: ["python", "-m", "apex_agent.mcp_servers.mail"]
+    environment:
+      APEX_MCP_OPA_URL: http://opa:8181
+      APEX_AUDIT_DB_URL: postgresql://apex_audit:${AUDIT_DB_PASSWORD:?run make secrets}@app-postgres:5432/apex
+      APEX_SERVICE: mail-mcp
+      APEX_MAIL_HOST: mail.apex.local
+      APEX_MAIL_USER: rfq@apex.local*agent
+      APEX_MAIL_PASSWORD: ${MAIL_AGENT_PASSWORD:?run make secrets}
+      APEX_MAIL_CA_FILE: /certs/ca.crt
+    volumes: ["./data/generated/certs/ca.crt:/certs/ca.crt:ro"]
+    networks: [app, data, default]   # data: only for its INSERT-only audit role (S9)
+    depends_on: {opa: {condition: service_healthy}, erp-mcp-read: {condition: service_started}}
+    healthcheck: *mcp-health
+    restart: unless-stopped
+
+  # ---- S2: the knowledge job (on demand): Odoo + share -> read model, data-quality report, rule proposals.
+  #      Reads with the scoped read-only accounts; writes only to app-postgres and to the mounted docs/config.
+  knowledge:
+    image: apex/agent:local
+    profiles: ["tools"]
+    command: ["python", "-m", "apex_agent.knowledge.sync"]
+    environment:
+      APEX_AGENT: extractor
+      APEX_AUDIT_DB_URL: postgresql://apex_audit:${AUDIT_DB_PASSWORD:?run make secrets}@app-postgres:5432/apex
+      APEX_SERVICE: knowledge
+      APEX_LITELLM_URL: http://litellm:4000
+      APEX_LLM_KEY: ${LITELLM_KEY_EXTRACTOR:?run make secrets}
+      APEX_OPA_URL: http://opa:8181
+      APEX_MCP_OPA_URL: http://opa:8181
+      APEX_DB_URL: postgresql://apex:${APEX_DB_PASSWORD}@app-postgres:5432/apex
+      APEX_ODOO_URL: http://odoo:8069
+      APEX_ODOO_LOGIN: erp_reader
+      APEX_ODOO_PASSWORD: ${ODOO_READER_PASSWORD:?run make secrets}
+      APEX_SHARE_SERVER: fileserver
+      APEX_SHARE_USER: agent-ro
+      APEX_SHARE_PASSWORD: ${FILESHARE_AGENT_PASSWORD:?run make secrets}
+      APEX_FASTEMBED_DIR: /models/fastembed
+      APEX_CONFIG_DIR: /app/agent-config
+      APEX_DOCS_DIR: /app/docs-fde
+      APEX_EVAL_DIR: /eval
+      APEX_S3_ENDPOINT: minio:9000                 # S5: the cycle-time model and its card
+      APEX_S3_ACCESS_KEY: apex-agent
+      APEX_S3_SECRET_KEY: ${MINIO_AGENT_PASSWORD:?run make secrets}
+      HTTPS_PROXY: http://envoy-egress:10000       # S5: the World Bank download goes ONLY through the egress allow-list
+      NO_PROXY: localhost,127.0.0.1,odoo,fileserver,app-postgres,minio,opa,litellm,erp-mcp-read,erp-mcp-write,share-mcp
+    volumes:
+      - ./data/generated/models:/models:ro
+      - ./agent/config:/app/agent-config            # rule proposals, approved rules (policy.yaml)
+      - ./docs/fde:/app/docs-fde                     # DATA_QUALITY.md, RETRIEVAL_EVAL.md
+      - ./data/generated/ground_truth:/eval/ground_truth:ro   # evaluation ONLY (evaluate.py)
+      - ./data/generated/rfq_parts.json:/eval/rfq_parts.json:ro
+      - ./data/generated/rfq_labels.jsonl:/eval/rfq_labels.jsonl:ro   # S3: triage/gate evaluation ONLY
+      - ./data/reference/nist:/eval/nist:ro                           # S4: NIST test drawings (evaluation)
+      - ./data/generated/drawings/rfq:/eval/rfq_drawings:ro           # S12: repeat/revision evaluation ONLY
+    networks: [app, data, default]
+
+  # ---- S3: ingestion and the security gate. Both use the agent image; neither publishes a port.
+  # ingest: rfq@ inbox (its own login, read-only use) -> MinIO raw/ + incoming/, one Postgres job per email.
+  ingest:
+    image: apex/agent:local
+    command: ["python", "-m", "apex_agent.ingest.imap"]
+    environment:
+      APEX_DB_URL: postgresql://apex:${APEX_DB_PASSWORD}@app-postgres:5432/apex
+      APEX_MAIL_HOST: mail.apex.local
+      APEX_MAIL_USER: rfq@apex.local*agent
+      APEX_MAIL_PASSWORD: ${MAIL_AGENT_PASSWORD:?run make secrets}
+      APEX_MAIL_CA_FILE: /certs/ca.crt
+      APEX_S3_ENDPOINT: minio:9000
+      APEX_S3_ACCESS_KEY: apex-agent
+      APEX_S3_SECRET_KEY: ${MINIO_AGENT_PASSWORD:?run make secrets}
+    volumes: ["./data/generated/certs/ca.crt:/certs/ca.crt:ro"]
+    networks: [data, default]
+    depends_on: {app-postgres: {condition: service_healthy}, minio: {condition: service_healthy}}
+    restart: unless-stopped
+
+  # worker: takes jobs (SKIP LOCKED), runs the security gate (agent security_gate), triage (agent triage) and,
+  # for RFQs, the S4 extraction subgraph (agent extractor).
+  worker:
+    image: apex/agent:local
+    command: ["python", "-m", "apex_agent.worker"]
+    # a stable name: on start the worker re-queues the jobs locked under ITS name, so a job survives a recreated
+    # container (rebuild, new image), not only `docker restart`. ponytail: one worker; with several, give each its own
+    # name and add a lease (heartbeat + timeout) so a dead worker's jobs are taken over by the others
+    hostname: apex-worker
+    environment:
+      APEX_AGENT: security_gate
+      APEX_AUDIT_DB_URL: postgresql://apex_audit:${AUDIT_DB_PASSWORD:?run make secrets}@app-postgres:5432/apex
+      APEX_SERVICE: worker
+      APEX_LITELLM_URL: http://litellm:4000
+      APEX_LLM_KEY: ${LITELLM_KEY_SECURITY_GATE:?run make secrets}
+      APEX_GATE_TRIAGE_KEY: ${LITELLM_KEY_TRIAGE:?run make secrets}
+      APEX_OPA_URL: http://opa:8181
+      APEX_DB_URL: postgresql://apex:${APEX_DB_PASSWORD}@app-postgres:5432/apex
+      APEX_S3_ENDPOINT: minio:9000
+      APEX_S3_ACCESS_KEY: apex-agent
+      APEX_S3_SECRET_KEY: ${MINIO_AGENT_PASSWORD:?run make secrets}
+      APEX_GATE_CLAMD_HOST: clamav
+      APEX_GATE_LAB_DNS: /lab/lab_dns.json
+      APEX_DOC_EXTRACTOR_KEY: ${LITELLM_KEY_EXTRACTOR:?run make secrets}   # S4: reads drawings + emails as agent `extractor`
+      APEX_DOC_DRAFTER_KEY: ${LITELLM_KEY_DRAFTER:?run make secrets}       # S6: writes the reply as agent `drafter`
+      APEX_CONFIG_DIR: /app/agent-config
+      APEX_FASTEMBED_DIR: /models/fastembed        # S5: analog search for the price check
+    volumes:
+      - ./data/generated/mail/lab_dns.json:/lab/lab_dns.json:ro
+      - ./data/generated/models:/models:ro
+      - ./agent/config:/app/agent-config:ro   # material_map.yaml (S4)
+    networks: [app, data]
+    depends_on: {clamav: {condition: service_healthy}, litellm: {condition: service_healthy}, erp-mcp-read: {condition: service_healthy}}
+    restart: unless-stopped
+
+  # ---- S7: the review screen. Reached ONLY through envoy-ingress (https://localhost:8448), never a port of its own.
+  # Least privilege: no LLM key, no mail login, no MCP write tool. It reads the review tables (role review_ui), reads
+  # drawings (MinIO user review-ui: raw/ and files/ only), asks OPA, and hands decisions to the worker (jobs.decision).
+  review-ui:
+    image: apex/agent:local
+    command: ["uvicorn", "apex_agent.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--no-server-header"]
+    environment:
+      APEX_REVIEW_DB_URL: postgresql://review_ui:${REVIEW_UI_DB_PASSWORD:?run make secrets}@app-postgres:5432/apex
+      APEX_REVIEW_OPA_URL: http://opa:8181
+      APEX_AUDIT_DB_URL: postgresql://apex_audit:${AUDIT_DB_PASSWORD:?run make secrets}@app-postgres:5432/apex
+      APEX_SERVICE: review-ui
+      APEX_REVIEW_JWKS_URL: http://keycloak:8080/realms/apex/protocol/openid-connect/certs
+      APEX_REVIEW_ISSUER: https://localhost:8445/realms/apex
+      APEX_REVIEW_APPROVAL_KEY: ${APPROVAL_SIGNING_KEY:?run make secrets}   # S8: signs approvals (OPA verifies; the worker never has it)
+      APEX_S3_ENDPOINT: minio:9000
+      APEX_S3_ACCESS_KEY: review-ui
+      APEX_S3_SECRET_KEY: ${MINIO_REVIEW_PASSWORD:?run make secrets}
+      APEX_REVIEW_WHATIF_URL: http://whatif:8000   # S16: questions go to the assistant's own service (no LLM key here)
+    networks: [app, data]
+    depends_on: {app-postgres: {condition: service_healthy}, keycloak: {condition: service_healthy}, opa: {condition: service_healthy}}
+    healthcheck: *mcp-health
+    restart: unless-stopped
+
+  # ---- S16: the what-if assistant. Its own LiteLLM key and budget, read-only tools, its own Postgres role (reads the
+  # estimates, writes only its Q&A log) and MinIO user (reads the models only). Called only by the review screen, with
+  # the person's Keycloak token, which it verifies too. No port of its own.
+  whatif:
+    image: apex/agent:local
+    command: ["python", "-m", "apex_agent.whatif"]
+    environment:
+      APEX_AGENT: whatif
+      APEX_SERVICE: whatif
+      APEX_LITELLM_URL: http://litellm:4000
+      APEX_LLM_KEY: ${LITELLM_KEY_WHATIF:?run make secrets}
+      APEX_OPA_URL: http://opa:8181
+      APEX_MCP_OPA_URL: http://opa:8181
+      APEX_COSTING_NODE: whatif                    # erp-mcp-read sees node `whatif` (OPA: read tools only)
+      APEX_AUDIT_DB_URL: postgresql://apex_audit:${AUDIT_DB_PASSWORD:?run make secrets}@app-postgres:5432/apex
+      APEX_WHATIF_DB_URL: postgresql://whatif:${WHATIF_DB_PASSWORD:?run make secrets}@app-postgres:5432/apex
+      APEX_WHATIF_JWKS_URL: http://keycloak:8080/realms/apex/protocol/openid-connect/certs
+      APEX_WHATIF_ISSUER: https://localhost:8445/realms/apex
+      APEX_S3_ENDPOINT: minio:9000
+      APEX_S3_ACCESS_KEY: whatif
+      APEX_S3_SECRET_KEY: ${MINIO_WHATIF_PASSWORD:?run make secrets}
+      APEX_CONFIG_DIR: /app/agent-config
+    volumes:
+      - ./agent/config:/app/agent-config:ro   # the engine's shop standards (costing.yaml...), read only
+    networks: [app, data]
+    depends_on: {opa: {condition: service_healthy}, erp-mcp-read: {condition: service_started}, litellm: {condition: service_healthy}}
+    healthcheck: *mcp-health
+    restart: unless-stopped
+
+  # The agent's own image. S1: on-demand self-check (`run --rm agent python -m apex_agent.selfcheck`).
+  # From S3 it becomes the long-running ingest/graph workers. App network only: no internet.
+  agent:
+    image: apex/agent:local
+    profiles: ["tools"]
+    environment:
+      APEX_AGENT: triage
+      APEX_AUDIT_DB_URL: postgresql://apex_audit:${AUDIT_DB_PASSWORD:?run make secrets}@app-postgres:5432/apex
+      APEX_SERVICE: agent
+      APEX_LITELLM_URL: http://litellm:4000
+      APEX_LLM_KEY: ${LITELLM_KEY_TRIAGE:?run make secrets}
+      APEX_OPA_URL: http://opa:8181
+    networks: [app, data]
+
+networks:
+  edge: {}
+  outbound: {}
+  app: {internal: true}
+  data: {internal: true}
+  egress: {internal: true}
+
+volumes:
+  app-pg:
+  minio:
+  clickhouse-data:
+  clickhouse-logs:
+  prometheus:
+  grafana:
+  clamav:

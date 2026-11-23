@@ -1,0 +1,157 @@
+{
+ "uid": "apex-kpi",
+ "title": "Apex · Business KPIs (before / after)",
+ "tags": [
+  "apex",
+  "s10"
+ ],
+ "timezone": "browser",
+ "refresh": "1m",
+ "schemaVersion": 39,
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "title": "Median response time: before (legacy, L6) vs now (agent)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT 'before: by hand (L6 baseline, 400 quotes)' AS process, '4.9 days' AS median_rfq_to_quote\n                 UNION ALL\n                 SELECT 'now: with the agent (' || count(*) || ' quotes sent)',\n                        coalesce(round((percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM a.at - coalesce(e.sent_at, e.ingested_at)) / 3600))::numeric, 2) || ' hours', 'none sent yet')\n                 FROM actions a JOIN emails e ON e.id = a.email_id WHERE a.result ? 'quotation'",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 1
+  },
+  {
+   "title": "Win rate: before vs now",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT 'before (L6 baseline)' AS process, '27.2 % (106 won, 284 lost, 10 open)' AS win_rate\n                 UNION ALL\n                 SELECT 'now (agent quotes decided in Odoo)',\n                        CASE WHEN count(*) FILTER (WHERE outcome <> 'open') = 0 THEN 'no decided quotes yet'\n                             ELSE round(100.0 * count(*) FILTER (WHERE outcome = 'won') / count(*) FILTER (WHERE outcome <> 'open'), 1) || ' % ('\n                                  || count(*) FILTER (WHERE outcome = 'won') || ' won / ' || count(*) FILTER (WHERE outcome <> 'open') || ' decided)' END\n                 FROM outcomes",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 2
+  },
+  {
+   "title": "On-time delivery: before vs now",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT 'before (L6 baseline, flat 3-week promises)' AS process, '71.4 % (75 of 105 delivered orders)' AS on_time\n                 UNION ALL SELECT 'now (committed dates from capacity)', 'measurable once agent-quoted orders are delivered (S18 compares)'",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 3
+  },
+  {
+   "title": "Quotes sent per day by the agent",
+   "type": "timeseries",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT date_trunc('day', at) AS time, count(*) AS quotes FROM actions WHERE result ? 'quotation' AND $__timeFilter(at) GROUP BY 1 ORDER BY 1",
+     "format": "time_series",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 4
+  },
+  {
+   "title": "Hours from RFQ to quote, per quote sent",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 24,
+    "h": 8,
+    "x": 0,
+    "y": 16
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT a.email_id AS email, e.subject, round(extract(epoch FROM a.at - coalesce(e.sent_at, e.ingested_at)) / 3600, 2) AS hours,\n                        a.result->>'quotation' AS quotation FROM actions a JOIN emails e ON e.id = a.email_id\n                 WHERE a.result ? 'quotation' ORDER BY a.at DESC LIMIT 30",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 5
+  }
+ ]
+}

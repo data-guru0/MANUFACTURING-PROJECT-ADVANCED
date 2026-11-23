@@ -1,0 +1,6 @@
+# LF everywhere so shell scripts mounted into Linux containers don't break on CRLF.
+* text=auto eol=lf
+*.xlsx binary
+*.pdf binary
+*.png binary
+*.step binary

@@ -1,0 +1,88 @@
+# Emission factors for the CO2 estimate (S5, W15). EVERY factor has a source, a year, units and a status:
+#   verified = the headline figure was read from the named source at build time (2026-11-21)
+#   proxy    = the best public figure found, NOT for this exact product: the estimate says so, line by line
+#   null     = no citable public figure: that contribution is EXCLUDED and the reviewer is told to ask the supplier
+# Methodology: an estimate following the GHG Protocol product-level approach (cradle-to-gate material + the
+# energy of Apex's own machining), NOT a certified product carbon footprint.
+methodology: >-
+  Estimate following the GHG Protocol Product Standard approach: purchased material (stock weight incl. scrap)
+  x cradle-to-gate factor + machine energy (machine hours x rated power) x grid factor + outside processes where a
+  factor is known. Not a certified product carbon footprint (no third-party verification, industry-average factors).
+
+materials:   # kg CO2e per kg of purchased material, cradle-to-gate
+  MAT-AL6061:
+    factor: 14.8
+    status: verified
+    source: "International Aluminium Institute, primary aluminium GHG intensity, 2023 global average (14.8 t CO2e/t)"
+    url: https://international-aluminium.org/landing/aluminium-carbon-footprint-faqs/
+    year: 2023
+    note: "primary metal; bar with recycled content is lower (IAI all-aluminium average 2023 = 10.04)"
+  MAT-AL7075:
+    factor: 14.8
+    status: verified
+    source: "International Aluminium Institute, primary aluminium GHG intensity, 2023 global average"
+    url: https://international-aluminium.org/landing/aluminium-carbon-footprint-faqs/
+    year: 2023
+  MAT-1018:
+    factor: 1.92
+    status: verified
+    source: "worldsteel Sustainability Indicators: 1.92 t CO2 per t crude steel cast, 2023 global average"
+    url: https://worldsteel.org/wp-content/uploads/Sustainability-Indicators-2025.pdf
+    year: 2023
+    note: "CO2 only (not CO2e) and crude steel, not finished bar: a lower bound"
+  MAT-S235:
+    factor: 1.92
+    status: verified
+    source: "worldsteel Sustainability Indicators: 1.92 t CO2 per t crude steel cast, 2023 global average"
+    url: https://worldsteel.org/wp-content/uploads/Sustainability-Indicators-2025.pdf
+    year: 2023
+    note: "CO2 only (not CO2e): a lower bound"
+  MAT-SS304:
+    factor: 3.70
+    status: verified
+    source: "worldstainless, CO2 per t of stainless steel at 50 % scrap content, scopes 1-3, cradle-to-gate"
+    url: https://www.worldstainless.org/news/stainless-steel-co2-emissions-report/
+    year: 2023
+    note: "industry average by scrap share (85 % scrap 1.95 ... 30 % scrap 6.80); not grade-specific"
+  MAT-SS316:
+    factor: 3.70
+    status: verified
+    source: "worldstainless, CO2 per t of stainless steel at 50 % scrap content, scopes 1-3, cradle-to-gate"
+    url: https://www.worldstainless.org/news/stainless-steel-co2-emissions-report/
+    year: 2023
+    note: "not grade-specific (316 has more nickel and molybdenum than 304: likely higher)"
+  MAT-C360:
+    factor: 3.67
+    status: proxy
+    source: "EPD (EPD Hub, 2025) for brass valve fittings, GWP-fossil A1-A3 3.67 kg CO2e/kg"
+    url: https://res.cloudinary.com/dahlzxcv/image/upload/v1745585025/akeneo-assets/EPD_HUB-3172_2025-04-13.pdf
+    year: 2025
+    note: "a finished brass product, not C360 rod: ask the bar supplier for an EPD"
+  MAT-POM:
+    factor: 7.3
+    status: proxy
+    source: "Carbonfact material database, polyoxymethylene average 7.3 kg CO2e/kg (boundaries not verified)"
+    url: https://www.carbonfact.com/materials/polyoxymethylene
+    year: 2025
+    note: "the PlasticsEurope POM eco-profile is the better source (not readable at build time)"
+  MAT-TI64:
+    factor: null
+    status: null
+    source: "no citable public cradle-to-gate figure for wrought Ti-6Al-4V found at build time"
+    note: "excluded from the estimate; ask the titanium supplier for its product carbon footprint"
+
+grid:        # kg CO2e per kWh of electricity at Apex's plant
+  region: IN   # ponytail: Apex's plant is in India (Odoo calendar Asia/Kolkata); change here if it isn't
+  factor: 0.727
+  status: verified
+  source: "Ember, India grid emission factor 727 g CO2e/kWh (lifecycle), 'From fossil to flexible' analysis"
+  url: https://ember-energy.org/latest-insights/from-fossil-to-flexible-advancing-indias-road-transport-electrification/clean-electricity-supply-must-keep-pace
+  year: 2025
+  note: "machine energy = run hours x the work center's rated power (Odoo x_power_kw): an upper bound"
+
+outside_processes:   # kg CO2e per part
+  OSP-ANODIZE: {factor: null, source: "no citable per-part factor", note: "ask the anodiser for its process footprint"}
+  OSP-PLATING: {factor: null, source: "no citable per-part factor", note: "ask the plater for its process footprint"}
+  OSP-POWDER: {factor: null, source: "no citable per-part factor", note: "ask the coater for its process footprint"}
+  OSP-PASSIVATE: {factor: null, source: "no citable per-part factor", note: "ask the finisher for its process footprint"}
+  OSP-HEATTREAT: {factor: null, source: "no citable per-part factor", note: "ask the heat treater for its process footprint"}

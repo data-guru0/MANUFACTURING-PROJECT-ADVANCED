@@ -1,0 +1,23 @@
+# Secrets: never commit
+.env
+.env.*
+!.env.example
+
+# Generated data and container volumes
+data/generated/
+volumes/
+
+# Python / tooling
+.venv/
+__pycache__/
+*.egg-info/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.claude/
+
+# Linux wheels for the agent image, downloaded on the host (make wheels)
+agent/.wheels/
+backups/

@@ -1,0 +1,4 @@
+<div class="msg {{ 'ok' if ok else 'bad' }}" id="result">
+  {% if not ok %}<strong>Not done:</strong>{% endif %}
+  {% for m in messages %}<div>{{ m }}</div>{% endfor %}
+</div>

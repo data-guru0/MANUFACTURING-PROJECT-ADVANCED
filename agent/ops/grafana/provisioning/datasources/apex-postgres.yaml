@@ -1,0 +1,11 @@
+# S3: the agent's database, READ-ONLY (role grafana_ro: SELECT on the triage tables only).
+apiVersion: 1
+datasources:
+  - name: Apex agent DB
+    uid: apex-pg
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: app-postgres:5432
+    user: grafana_ro
+    jsonData: {database: apex, sslmode: disable, postgresVersion: 1700}
+    secureJsonData: {password: $GRAFANA_DB_PASSWORD}

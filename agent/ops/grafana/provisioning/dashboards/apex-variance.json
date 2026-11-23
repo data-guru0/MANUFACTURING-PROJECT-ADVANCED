@@ -1,0 +1,275 @@
+{
+ "uid": "apex-variance",
+ "title": "Apex · Quoted vs actual",
+ "tags": [
+  "apex",
+  "s10"
+ ],
+ "timezone": "browser",
+ "refresh": "5m",
+ "schemaVersion": 39,
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "title": "Finished jobs",
+   "type": "stat",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 6,
+    "h": 4,
+    "x": 0,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT count(*) AS jobs FROM variance_jobs",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 1
+  },
+  {
+   "title": "Jobs that lost money",
+   "type": "stat",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 6,
+    "h": 4,
+    "x": 6,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT count(*) FILTER (WHERE lost_money) AS lost_money FROM variance_jobs",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 2
+  },
+  {
+   "title": "Total loss on those jobs",
+   "type": "stat",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 6,
+    "h": 4,
+    "x": 12,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT -sum(profit) FILTER (WHERE lost_money) AS loss FROM variance_jobs",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "id": 3
+  },
+  {
+   "title": "Actual / planned minutes (all work orders)",
+   "type": "stat",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 6,
+    "h": 4,
+    "x": 18,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT round(sum(minutes_actual) / nullif(sum(minutes_planned), 0), 3) AS ratio FROM variance_ops",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 4
+  },
+  {
+   "title": "Actual / planned minutes by family (median; > 1 = the estimate is too short)",
+   "type": "barchart",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT family, round(percentile_cont(0.5) WITHIN GROUP (ORDER BY ratio)::numeric, 3) AS median_ratio\n                     FROM variance_ops WHERE family IS NOT NULL GROUP BY 1 ORDER BY 2 DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 5
+  },
+  {
+   "title": "… by machine",
+   "type": "barchart",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT work_center, round(percentile_cont(0.5) WITHIN GROUP (ORDER BY ratio)::numeric, 3) AS median_ratio\n                     FROM variance_ops GROUP BY 1 ORDER BY 2 DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 6
+  },
+  {
+   "title": "… by material",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 12
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT material, round(percentile_cont(0.5) WITHIN GROUP (ORDER BY ratio)::numeric, 3) AS median_ratio, count(*) AS work_orders\n                     FROM variance_ops WHERE material IS NOT NULL GROUP BY 1 ORDER BY 2 DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 7
+  },
+  {
+   "title": "… by customer (profit)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 12
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT customer, count(*) AS jobs, count(*) FILTER (WHERE lost_money) AS lost_money, round(sum(profit)) AS profit_usd\n                     FROM variance_jobs GROUP BY 1 ORDER BY 4",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 8
+  },
+  {
+   "title": "The jobs that lost money (worst first)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 24,
+    "h": 10,
+    "x": 0,
+    "y": 20
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT sale_order, customer, part, family, material, qty, revenue, actual_cost, profit, minutes_planned, minutes_actual\n                     FROM variance_jobs WHERE lost_money ORDER BY profit",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 9
+  }
+ ]
+}

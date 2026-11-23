@@ -1,0 +1,129 @@
+[project]
+name = "apex-fde"
+version = "0.1.0"
+description = "Apex Precision Components: legacy quoting system + FDE agentic solution (learning prototype)"
+requires-python = "==3.12.*"
+dependencies = [
+    "cadquery>=2.8.0",
+    "ezdxf>=1.4.5",
+    "fastembed>=0.9.1",
+    "httpx>=0.28.1",
+    "mcp>=2.3.0",
+    "numpy>=2.5.5",
+    "openpyxl>=3.1.5",
+    "pillow>=13.0.0",
+    "psycopg[binary]>=3.3.9",
+    "pydantic>=2.14.4",
+    "pydantic-settings>=2.16.3",
+    "pymupdf>=2.1",
+    "pyyaml>=6.0.3",
+    "smbprotocol>=1.17.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+    "types-openpyxl>=3.1.5.20261017",
+    "dkimpy>=1.1.8",
+    "playwright>=1.65.2",
+    "types-pyyaml>=6.0.12.20261113",
+    "minio==7.2.20",
+    "langgraph==1.2.24",
+    "scikit-learn==1.8.0",
+    "hypothesis>=6.170.17",
+    "langgraph-checkpoint-postgres==3.2.1",
+    "fastapi==0.165.0",
+    "pyjwt[crypto]==2.15.1",
+    "python-multipart==0.0.34",
+    "jinja2==3.1.6",
+    "pre-commit>=4.7.0",
+]
+
+[tool.uv]
+package = false  # ponytail: plain scripts for now; becomes a package when agent/src/ arrives (S1)
+
+[tool.ruff]
+line-length = 130
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["apex_agent", "legacy", "scripts", "agent", "tests"]
+
+[tool.ruff.lint.per-file-ignores]
+# Odoo addon conventions: bare-dict manifest, side-effect imports in __init__.
+"legacy/odoo/addons/**" = ["B018", "F401"]
+# Email templates in four languages read better unwrapped.
+"legacy/traffic/rfq_mix.py" = ["E501"]
+# Generated-report text (markdown table rows) reads better unwrapped.
+"scripts/baseline_metrics.py" = ["E501"]
+"scripts/pain_points.py" = ["E501"]
+"scripts/replies_eval.py" = ["E501"]
+"scripts/suppliers_eval.py" = ["E501"]
+"scripts/backup.py" = ["E501"]
+"scripts/restore_drill.py" = ["E501"]
+"scripts/drills.py" = ["E501"]
+# Tool descriptions are prompt text the model reads: unwrapped.
+"agent/src/apex_agent/whatif.py" = ["E501"]
+"agent/src/apex_agent/suppliers.py" = ["E501"]   # prompt text and the RFQ template
+"agent/src/apex_agent/knowledge/report.py" = ["E501"]
+"agent/src/apex_agent/costing/variance.py" = ["E501"]
+"agent/src/apex_agent/governance/shadow.py" = ["E501"]
+# SQL against the live database reads better unwrapped.
+"tests/agent/test_s3_ingest.py" = ["E501"]
+"tests/agent/test_m4_extensions.py" = ["E501"]
+"agent/src/apex_agent/worker.py" = ["E501"]
+"tests/agent/test_s4_extraction.py" = ["E501"]
+"tests/agent/test_s5_costing.py" = ["E501"]
+"tests/agent/test_s6_graph.py" = ["E501"]
+"tests/agent/test_s7_review.py" = ["E501"]
+"tests/agent/test_s2_integration.py" = ["E501"]
+"tests/agent/test_s8_actions.py" = ["E501"]
+# JSON schemas, regexes and source-ranking expressions read better unwrapped.
+"agent/src/apex_agent/documents/*.py" = ["E501"]
+"agent/src/apex_agent/costing/*.py" = ["E501"]   # provenance strings and report rows
+"agent/src/apex_agent/graph/*.py" = ["E501"]
+"agent/src/apex_agent/knowledge/evaluate.py" = ["E501"]
+"agent/src/apex_agent/knowledge/rules.py" = ["E501"]
+"agent/src/apex_agent/knowledge/normalize.py" = ["E501"]
+"agent/src/apex_agent/mcp_servers/*.py" = ["E501"]   # Odoo domains and tool payloads
+"agent/src/apex_agent/actions/*.py" = ["E501"]   # the quote PDF template, SQL, Odoo payloads
+"agent/src/apex_agent/audit/*.py" = ["E501"]
+"agent/src/apex_agent/llm/client.py" = ["E501"]
+"agent/src/apex_agent/governance/*.py" = ["E501"]
+"tests/security/*.py" = ["E501"]
+"tests/agent/test_s9_governance.py" = ["E501"]
+"agent/src/apex_agent/api/*.py" = ["E501"]   # SQL and the CSP header read better unwrapped
+"agent/ops/provision_access.py" = ["E501"]   # Keycloak admin payloads
+"agent/ops/killswitch.py" = ["E501"]
+"agent/ops/prompts.py" = ["E501"]
+"scripts/supply_chain.py" = ["E501"]
+"agent/evals/*.py" = ["E501"]
+"agent/ops/grafana/make_dashboards.py" = ["E501"]
+"agent/src/apex_agent/golden.py" = ["E501"]
+"agent/ops/litellm/apex_guardrails.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["scripts", "tests", "legacy", "agent/src", "agent/ops", "agent/evals"]
+mypy_path = "agent/src"
+explicit_package_bases = true
+exclude = ["legacy/odoo/addons/"]  # runs inside the Odoo container, odoo isn't installed here
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "agent/src"]
+markers = ["llm: calls the real Groq API through LiteLLM (costs a fraction of a cent)",
+           "redteam: 8 attack emails through the full pipeline; Groq-heavy, so opt-in (make redteam), not in make check"]
+addopts = "-m 'not redteam'"
+
+[[tool.mypy.overrides]]
+# ponytail: these CAD/PDF libraries ship partial type info; treat them as untyped, keep our code strict.
+module = ["ezdxf", "ezdxf.*", "pymupdf", "pymupdf.*", "cadquery", "cadquery.*", "smbclient", "smbclient.*", "smbprotocol", "smbprotocol.*", "dkim", "dkim.*", "magic", "magic.*", "presidio_analyzer", "presidio_analyzer.*", "presidio_anonymizer", "presidio_anonymizer.*", "OCP", "OCP.*", "ocrmypdf", "ocrmypdf.*", "lingua", "lingua.*", "langgraph", "langgraph.*", "joblib", "joblib.*", "sklearn", "sklearn.*", "weasyprint", "weasyprint.*", "litellm", "litellm.*"]
+follow_imports = "skip"
+ignore_missing_imports = true

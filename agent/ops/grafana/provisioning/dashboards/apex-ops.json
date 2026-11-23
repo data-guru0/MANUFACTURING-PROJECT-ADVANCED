@@ -1,0 +1,306 @@
+{
+ "uid": "apex-ops",
+ "title": "Apex · Operations",
+ "tags": [
+  "apex",
+  "s10"
+ ],
+ "timezone": "browser",
+ "refresh": "30s",
+ "schemaVersion": 39,
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "title": "Jobs by status now",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 8,
+    "h": 8,
+    "x": 0,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT status, count(*) AS jobs FROM jobs GROUP BY status ORDER BY jobs DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 1
+  },
+  {
+   "title": "Oldest job waiting to run (minutes)",
+   "type": "stat",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 4,
+    "h": 8,
+    "x": 8,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT coalesce(round(extract(epoch FROM now() - min(created_at)) / 60), 0) AS minutes FROM jobs WHERE status = 'queued' AND available_at <= now()",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "m"
+    },
+    "overrides": []
+   },
+   "id": 2
+  },
+  {
+   "title": "Waiting for review now",
+   "type": "stat",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 4,
+    "h": 8,
+    "x": 12,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT count(*) FROM jobs WHERE status = 'awaiting_review'",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 3
+  },
+  {
+   "title": "Jobs waiting for Groq's daily quota",
+   "type": "stat",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 4,
+    "h": 8,
+    "x": 16,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT count(*) FROM jobs WHERE status = 'queued' AND error LIKE 'QuotaExhausted%'",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 4
+  },
+  {
+   "title": "Failed jobs (need a person)",
+   "type": "stat",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 4,
+    "h": 8,
+    "x": 20,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT count(*) FROM jobs WHERE status = 'failed'",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 5
+  },
+  {
+   "title": "Emails in per hour",
+   "type": "timeseries",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT date_trunc('hour', e.ingested_at) AS time, count(*) AS emails FROM emails e WHERE $__timeFilter(e.ingested_at) AND e.mailbox <> 'canary' GROUP BY 1 ORDER BY 1",
+     "format": "time_series",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 6
+  },
+  {
+   "title": "Graph steps finished per hour, by node",
+   "type": "timeseries",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT date_trunc('hour', at) AS time, node AS metric, count(*) AS steps FROM graph_events WHERE $__timeFilter(at) GROUP BY 1, 2 ORDER BY 1",
+     "format": "time_series",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 7
+  },
+  {
+   "title": "Minutes from email in to waiting for review (median, per hour)",
+   "type": "timeseries",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 16
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT date_trunc('hour', r.updated_at) AS time,\n                        percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM r.updated_at - e.ingested_at) / 60) AS minutes\n                 FROM review_items r JOIN emails e ON e.id = r.email_id WHERE $__timeFilter(r.updated_at) AND e.mailbox <> 'canary' GROUP BY 1 ORDER BY 1",
+     "format": "time_series",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "m"
+    },
+    "overrides": []
+   },
+   "id": 8
+  },
+  {
+   "title": "Recent job errors",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 16
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT email_id AS email, status, attempts, left(error, 120) AS error, available_at FROM jobs WHERE error IS NOT NULL ORDER BY available_at DESC LIMIT 30",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 9
+  },
+  {
+   "title": "Envoy ingress: requests per second by response class",
+   "type": "timeseries",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 24,
+    "h": 8,
+    "x": 0,
+    "y": 24
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (envoy_response_code_class) (rate(envoy_http_downstream_rq_xx{envoy_http_conn_manager_prefix=~\"ingress_.*\"}[5m]))"
+    }
+   ],
+   "id": 10
+  }
+ ]
+}

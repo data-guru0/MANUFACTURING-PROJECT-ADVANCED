@@ -1,0 +1,33 @@
+# S19: the FAST checks on every commit (the full local gate is `make check`). Local hooks only: nothing is downloaded at
+# commit time; the tools are the project's own (uv) and the pinned images `make check` already uses.
+# Install once per clone: uv run pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff (lint)
+        entry: uv run ruff check --force-exclude
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff (format)
+        entry: uv run ruff format --check --force-exclude
+        language: system
+        types: [python]
+      - id: mypy
+        name: mypy (agent/src)
+        entry: uv run mypy
+        language: system
+        pass_filenames: false
+        files: ^agent/src/.*\.py$
+      - id: opa-test
+        name: opa test (the policies)
+        entry: docker run --rm -v ./agent/policy/rego:/p:ro openpolicyagent/opa:1.22.4-static test /p
+        language: system
+        pass_filenames: false
+        files: ^agent/(policy/rego/|config/policy\.yaml)
+      - id: gitleaks
+        name: gitleaks (secrets in the staged changes)
+        entry: docker run --rm -v .:/repo:ro -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=* zricethezav/gitleaks:v8.30.0 git /repo --pre-commit --staged --config /repo/.gitleaks.toml --redact --no-banner
+        language: system
+        pass_filenames: false

@@ -1,0 +1,34 @@
+# LiteLLM proxy: the only path to any LLM (ADR 0005). OSS features only.
+# The model aliases come from agent/config/models.yaml (mounted next to this file).
+include:
+  - models.yaml
+
+litellm_settings:
+  request_timeout: 60          # seconds per call
+  num_retries: 2
+  drop_params: true
+  success_callback: ["langfuse"]   # every call, with tokens and cost, to Langfuse (LANGFUSE_HOST)
+  callbacks: apex_guardrails.proxy_handler_instance   # S9: registry max_tokens, PII masking, drafter output safety
+  # S9: a Redis cache for identical DETERMINISTIC calls; off unless a call asks for it ("cache": {"use-cache": true})
+  cache: true
+  cache_params:
+    type: redis
+    host: redis
+    port: 6379
+    password: os.environ/REDIS_PASSWORD
+    ttl: 86400
+    mode: default_off
+  failure_callback: ["langfuse"]
+
+router_settings:
+  # Two Groq accounts (models.yaml): a key that answers 429 (its daily quota spent) rests 5 min while calls retry on the
+  # other key (litellm_settings.num_retries), so one spent account no longer stops the system.
+  cooldown_time: 300
+  # Fallbacks only to vetted aliases. After that the caller gets an error and escalates to a human
+  # (agent/src/apex_agent/llm/client.py raises NeedsHuman); never an unvetted model.
+  fallbacks:
+    - quote-reasoner: ["quote-reasoner-lite"]
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL

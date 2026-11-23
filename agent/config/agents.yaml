@@ -1,0 +1,49 @@
+# AI agent registry (governance, extended in S9). One LiteLLM virtual key per agent, registered by
+# agent/ops/litellm/keys.py from this file. The key VALUE lives only in .env (LITELLM_KEY_<NAME>).
+# budget_usd is per 30 days; LiteLLM refuses calls once it is spent. max_tokens caps every call (S9).
+agents:
+  security_gate:
+    owner: Vikram (IT)
+    purpose: Detect prompt injection and unsafe content in incoming email and documents
+    risk: high
+    models: [quote-guard, quote-safety]
+    rpm: 30          # = Groq's free-tier limit for Prompt Guard 2 (console.groq.com/docs/rate-limits)
+    tpm: 60000
+    budget_usd: 2.0
+    max_tokens: 64   # S9: per-call cap, enforced in LiteLLM (apex_guardrails.py)
+  triage:
+    owner: Arjun (estimating)
+    purpose: Classify incoming email (RFQ, follow-up, supplier reply, not an RFQ)
+    risk: medium
+    models: [quote-triage]
+    rpm: 60
+    tpm: 60000
+    budget_usd: 2.0
+    max_tokens: 1500   # S9: per-call cap, enforced in LiteLLM (apex_guardrails.py)
+  extractor:
+    owner: Ramesh (estimating)
+    purpose: Read drawings and emails into a structured part specification
+    risk: high
+    models: [quote-reasoner, quote-reasoner-lite, quote-vision]
+    rpm: 30
+    tpm: 120000
+    budget_usd: 10.0
+    max_tokens: 4000   # S9: per-call cap, enforced in LiteLLM (apex_guardrails.py)
+  whatif:
+    owner: Ramesh (estimating)
+    purpose: "S16: answer an estimator's what-if questions with read-only tools (cannot approve, edit or send)"
+    risk: medium
+    models: [quote-reasoner, quote-reasoner-lite]   # lite: fallback when the daily quota is spent
+    rpm: 20
+    tpm: 60000
+    budget_usd: 2.0
+    max_tokens: 1500
+  drafter:
+    owner: Ramesh (estimating)
+    purpose: Write the reply text around numbers computed by code
+    risk: high
+    models: [quote-reasoner, quote-reasoner-lite]
+    rpm: 30
+    tpm: 60000
+    budget_usd: 5.0
+    max_tokens: 3000   # S9: per-call cap, enforced in LiteLLM (apex_guardrails.py)

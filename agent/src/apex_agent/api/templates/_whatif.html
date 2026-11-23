@@ -1,0 +1,16 @@
+<div class="card small whatif-answer">
+  <p class="muted">You asked: {{ q }}</p>
+  <p style="white-space:pre-wrap">{{ a.answer }}</p>
+  <p>{% if a.refused %}<span class="badge">{{ a.refused }}</span>
+     {% elif a.faithful %}<span class="badge ok">every number comes from a tool</span>
+     {% else %}<span class="badge bad">unverified numbers: {{ a.unfaithful | join(", ") }}</span>{% endif %}
+     {% if a.spent_usd is defined %}<span class="muted">· {{ a.steps }} model steps · ${{ "%.4f" | format(a.spent_usd) }}</span>{% endif %}</p>
+  {% if a.calls %}<details><summary>Citations: {{ a.calls | length }} tool call(s)</summary>
+    <ol>{% for c in a.calls %}<li><code>{{ c.tool }}({{ c.args | tojson }})</code> · {{ c.result.source or c.result.error }}
+      {% if c.tool == "recompute_cost" and c.result.new_unit_price is defined %}
+        → ${{ "%.2f" | format(c.result.new_unit_price) }} × {{ c.result.quantity }}
+        <form hx-post="/jobs/{{ email_id }}/whatif/apply" hx-target="next .apply-result" hx-swap="innerHTML" style="display:inline">
+          <input type="hidden" name="log_id" value="{{ a.log_id }}"><input type="hidden" name="call" value="{{ loop.index0 }}">
+          <button type="submit">Apply as option</button></form><span class="apply-result"></span>
+      {% endif %}</li>{% endfor %}</ol></details>{% endif %}
+</div>

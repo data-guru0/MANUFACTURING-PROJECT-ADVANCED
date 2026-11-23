@@ -1,0 +1,197 @@
+# Apex Precision Components — the client's legacy ("as-is") system.
+# Runs on its own: nothing here may reference the agent stack.
+# ponytail: images pinned by tag; S1 pins every image by digest.
+name: apex
+
+services:
+  odoo-db:
+    build: ./legacy/odoo-db
+    image: apex/odoo-db:16
+    environment:
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD: ${ODOO_DB_PASSWORD:?run make secrets}
+      POSTGRES_DB: postgres
+    volumes:
+      - odoo-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odoo -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  odoo:
+    image: odoo:17.0
+    depends_on:
+      odoo-db:
+        condition: service_healthy
+    environment:
+      HOST: odoo-db
+      USER: odoo
+      PASSWORD: ${ODOO_DB_PASSWORD:?run make secrets}
+      ODOO_MASTER_PASSWORD: ${ODOO_MASTER_PASSWORD:?run make secrets}
+      ODOO_RC: /tmp/odoo.conf
+    # The master password must live in odoo.conf; write it inside the container at start
+    # so it never sits in a file in the repo.
+    # ponytail: secrets visible via `docker inspect`; Docker secrets / a vault in production.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        printf '[options]\naddons_path = /mnt/extra-addons\ndata_dir = /var/lib/odoo\nadmin_passwd = %s\nproxy_mode = False\n' "$$ODOO_MASTER_PASSWORD" > /tmp/odoo.conf
+        exec /entrypoint.sh odoo
+    ports:
+      - "127.0.0.1:8069:8069"
+    volumes:
+      - odoo-data:/var/lib/odoo
+      - ./legacy/odoo/addons:/mnt/extra-addons:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8069/web/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  # \\fileserver\Quotes (W16: writable by everyone with one shared password, no backups).
+  # Windows itself owns port 445, so the lab maps SMB to 127.0.0.1:1445. The server's disk is a plain
+  # folder (data/generated/share) so the class can also browse it in Explorer and open files in Excel.
+  fileserver:
+    build: ./legacy/share
+    image: apex/fileserver:l4
+    hostname: fileserver
+    environment:
+      FILESHARE_PASSWORD: ${FILESHARE_PASSWORD:?run make secrets}
+      FILESHARE_AGENT_PASSWORD: ${FILESHARE_AGENT_PASSWORD:-}   # S2: agent's read-only account (optional)
+    ports:
+      - "127.0.0.1:1445:445"
+    volumes:
+      - ./data/generated/share:/srv/share
+    healthcheck:
+      test: ["CMD", "bash", "-c", "</dev/tcp/127.0.0.1/445"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # Real SMTP/IMAP for apex.local, customers.local and suppliers.local, with DKIM signing and TLS
+  # from our own lab CA (run `uv run python -m legacy.mail.certs` first; `make demo-legacy` does).
+  # Mailboxes + DKIM keys are created by legacy/mail/setup_mail.py through the image's `setup` CLI.
+  mail:
+    image: ghcr.io/docker-mailserver/docker-mailserver:16.0.1
+    hostname: mail.apex.local
+    environment:
+      SSL_TYPE: manual
+      SSL_CERT_PATH: /certs/mail.crt
+      SSL_KEY_PATH: /certs/mail.key
+      ENABLE_OPENDKIM: 1
+      # ponytail: no spam/virus filtering, SPF or DMARC (saves ~1.5 GB RAM; .local has no DNS anyway)
+      ENABLE_AMAVIS: 0
+      ENABLE_CLAMAV: 0
+      ENABLE_SPAMASSASSIN: 0
+      ENABLE_RSPAMD: 0
+      ENABLE_OPENDMARC: 0
+      ENABLE_POLICYD_SPF: 0
+      ENABLE_FAIL2BAN: 0
+      ENABLE_UPDATE_CHECK: 0
+      POSTMASTER_ADDRESS: postmaster@apex.local
+      POSTFIX_MESSAGE_SIZE_LIMIT: 52428800
+      TZ: Asia/Kolkata
+    ports:
+      - "127.0.0.1:587:587"   # SMTP submission (STARTTLS + login required)
+      - "127.0.0.1:993:993"   # IMAPS
+    volumes:
+      - mail-data:/var/mail
+      - mail-state:/var/mail-state
+      - mail-config:/tmp/docker-mailserver
+      # written by `setup_mail.py --prestart`: the server will not start without at least one account
+      - ./data/generated/mail/postfix-accounts.cf:/tmp/docker-mailserver/postfix-accounts.cf:ro
+      # S2: Dovecot master user "agent" (logs in as rfq@apex.local*agent), written by setup_mail --prestart
+      - ./data/generated/mail/dovecot-masters.cf:/tmp/docker-mailserver/dovecot-masters.cf:ro
+      - ./data/generated/certs:/certs:ro
+    networks:
+      default:
+        aliases: [mail.apex.local]
+    healthcheck:
+      test: ["CMD-SHELL", "ss -ltn | grep -q ':993 ' && ss -ltn | grep -q ':587 '"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+      start_period: 15s
+    restart: unless-stopped
+
+  # Roundcube webmail: how the humans (and the class) read rfq@ today. http://127.0.0.1:8081
+  webmail:
+    image: roundcube/roundcubemail:1.7.6-apache
+    depends_on:
+      mail:
+        condition: service_healthy
+    environment:
+      ROUNDCUBEMAIL_DEFAULT_HOST: ssl://mail.apex.local
+      ROUNDCUBEMAIL_DEFAULT_PORT: 993
+      ROUNDCUBEMAIL_SMTP_SERVER: tls://mail.apex.local
+      ROUNDCUBEMAIL_SMTP_PORT: 587
+      ROUNDCUBEMAIL_DB_TYPE: sqlite
+      ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE: 25M
+    ports:
+      - "127.0.0.1:8081:80"
+    volumes:
+      - webmail-db:/var/roundcube/db
+      - ./legacy/mail/roundcube:/var/roundcube/config:ro
+      - ./data/generated/certs/ca.crt:/certs/ca.crt:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost/"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  # The outside world over real email: customers answer quotes, suppliers answer price requests.
+  # Watch them work in Docker Desktop -> Containers -> apex-customers-1 / apex-suppliers-1 -> Logs.
+  customers:
+    build: ./legacy/traffic
+    image: apex/responder:l5
+    command: ["python", "-m", "legacy.traffic.customer_responder"]
+    depends_on:
+      mail:
+        condition: service_healthy
+    environment: &responder-env
+      MAIL_HOST: mail.apex.local
+      MAIL_CA_FILE: /certs/ca.crt
+      ODOO_URL: http://odoo:8069
+      MAIL_CUSTOMERS_PASSWORD: ${MAIL_CUSTOMERS_PASSWORD:?run make secrets}
+      MAIL_SUPPLIERS_PASSWORD: ${MAIL_SUPPLIERS_PASSWORD:?run make secrets}
+      ODOO_OFFICE_PASSWORD: ${ODOO_OFFICE_PASSWORD:?run make secrets}
+    volumes: &responder-volumes
+      - ./legacy:/app/legacy:ro
+      - ./data/generated/certs/ca.crt:/certs/ca.crt:ro
+    restart: unless-stopped
+
+  suppliers:
+    build: ./legacy/traffic
+    image: apex/responder:l5
+    command: ["python", "-m", "legacy.traffic.supplier_responder"]
+    depends_on:
+      mail:
+        condition: service_healthy
+      odoo:
+        condition: service_healthy
+    environment: *responder-env
+    volumes: *responder-volumes
+    restart: unless-stopped
+
+  # Headless LibreOffice, only for recalculating spreadsheets: `docker compose run --rm calc ...`.
+  calc:
+    build: ./legacy/share/libreoffice
+    image: apex/calc:l4
+    profiles: ["tools"]
+    volumes:
+      - ./data/generated/recalc:/work
+
+volumes:
+  odoo-db:
+  odoo-data:
+  mail-data:
+  mail-state:
+  mail-config:
+  webmail-db:

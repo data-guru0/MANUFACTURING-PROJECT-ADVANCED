@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block main %}
+{% if not ai_on or (outage and outage.waiting) %}
+<div class="card" id="manual-mode" style="border-color:#f3b4ad;background:#fdecea">
+  <strong>Manual mode.</strong>
+  {% if not ai_on %}The AI is switched off (kill switch).{% else %}{{ outage.waiting }} job(s) are waiting for a service that is down
+  (since {{ outage.since.strftime("%H:%M") if outage.since else "now" }}: <span class="small">{{ (outage.why or "")[:120] }}</span>).{% endif %}
+  Nothing is lost: they resume by themselves when it's back. Quote anything urgent by hand in Odoo, as before.
+</div>
+{% endif %}
+<div id="queue" hx-get="/" hx-select="#queue" hx-swap="outerHTML" hx-trigger="every 10s">
+<h1>Waiting for review <span class="badge">{{ waiting | length }}</span></h1>
+<p class="small muted">Sorted by priority = chance of winning × value × capacity fit × urgency (S11); each row shows its factors.</p>
+<div class="card">
+{% if waiting %}
+<table>
+  <tr><th class="num">Priority</th><th>Job</th><th>Received</th><th>From</th><th>Subject</th><th>Route</th><th class="num">Value</th><th>Who may approve</th><th>Status</th></tr>
+  {% for j in waiting %}
+  <tr>
+    <td class="num" title="{{ j.why or '' }}"><strong>{{ "{:,.0f}".format(j.score) if j.score is not none else "–" }}</strong>
+      <div class="small muted why">{{ j.why or "not scored (before S11)" }}</div></td>
+    <td><a href="/jobs/{{ j.email_id }}">#{{ j.email_id }}</a></td>
+    <td class="small">{{ j.ingested_at.strftime("%Y-%m-%d %H:%M") }}</td>
+    <td>{{ j.from_name or j.from_addr }}</td>
+    <td>{{ j.subject }}</td>
+    <td><span class="badge {{ j.route }}">{{ j.route }}</span></td>
+    <td class="num">{{ j.value_usd | money }}</td>
+    <td>{% if j.needs_senior %}<span class="badge senior">senior estimator</span>{% else %}<span class="badge">estimator</span>{% endif %}</td>
+    <td class="small">{{ j.status }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}<p class="muted">Nothing is waiting. New RFQs appear here within a minute or two of arriving in rfq@.</p>{% endif %}
+</div>
+
+{% if manual %}
+<h2>For a person, without the AI <span class="badge">{{ manual | length }}</span></h2>
+<div class="card">
+<p class="small muted">Kept off external LLMs by policy (export control). Quote these the legacy way (Roundcube, Odoo, the calculator).</p>
+<table>
+  <tr><th>Job</th><th>When</th><th>From</th><th>Subject</th></tr>
+  {% for j in manual %}<tr><td>#{{ j.email_id }}</td><td class="small">{{ j.finished_at.strftime("%Y-%m-%d %H:%M") if j.finished_at else "" }}</td>
+    <td>{{ j.from_name or j.from_addr }}</td><td>{{ j.subject }}</td></tr>{% endfor %}
+</table>
+</div>
+{% endif %}
+
+<h2>Recently decided</h2>
+<div class="card">
+{% if decided %}
+<table>
+  <tr><th>Job</th><th>When</th><th>Decision</th><th>By</th><th>Reason</th><th>Subject</th><th class="num">Value</th></tr>
+  {% for d in decided %}
+  <tr>
+    <td><a href="/jobs/{{ d.email_id }}">#{{ d.email_id }}</a></td>
+    <td class="small">{{ d.decided_at.strftime("%Y-%m-%d %H:%M") }}</td>
+    <td><span class="badge">{{ d.action }}</span></td>
+    <td>{{ d.decided_by }}</td>
+    <td>{{ d.reason }}</td>
+    <td>{{ d.subject }}</td>
+    <td class="num">{{ (d.value_usd or 0) | money }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}<p class="muted">No decisions yet.</p>{% endif %}
+</div>
+</div>
+{% endblock %}

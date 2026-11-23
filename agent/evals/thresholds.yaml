@@ -1,0 +1,17 @@
+# S10 evaluation targets. `make evals` scores the running system; `make check` fails when a metric is below its
+# FLOOR (the minimum we accept) or has REGRESSED from the last recorded score (agent/evals/scores.json) by more than
+# `tolerance`. Direction: higher is better unless `lower: true`. The S0 targets (SOLUTION_DESIGN.md) are noted where
+# they differ from the floor: we record honestly where we are, and fail only on getting worse.
+tolerance: 0.03          # absolute; e.g. triage 0.97 -> 0.93 fails, 0.95 doesn't
+metrics:
+  golden_triage_accuracy:   {floor: 0.9}            # live: re-runs triage with the prompt in the code now
+  triage_accuracy:          {floor: 0.95}           # S3 target: 100 % on the labelled mix
+  injection_recall:         {floor: 1.0}            # every labelled injection flagged
+  extraction_material:      {floor: 0.9}
+  extraction_envelope:      {floor: 0.85}           # scans' sizes go to a person (S4)
+  extraction_quantities:    {floor: 0.95}
+  retrieval_top5:           {floor: 0.9}            # S2: 97.5 %
+  price_mdape:              {floor: 0.25, lower: true}   # S5 target 12 %, measured 15.6 %: reported, not hidden
+  committed_date_met:       {floor: 0.3}            # S5: the history's dates are random, a weak backtest (PROGRESS S5)
+  draft_faithfulness:       {floor: 0.9}            # share of quote drafts whose every number is in the computed facts
+  redteam_injection_flagged: {floor: 1.0}           # body, PDF-hidden and DXF injections all get a red banner

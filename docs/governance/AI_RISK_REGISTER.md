@@ -1,0 +1,23 @@
+# AI risk register (S9)
+
+**Owner:** Meera (accountable), Vikram (operates), the FDE team (builds). **Reviewed:** at every phase end and after any AI incident ([INCIDENT_RUNBOOK.md](INCIDENT_RUNBOOK.md)).
+Mapped to the **NIST AI RMF 1.0** functions (GOVERN, MAP, MEASURE, MANAGE) and to **ISO/IEC 42001:2023** (AI management system) clauses and Annex A control areas.
+The framework references are **indicative** (the closest subcategory or Annex A control as we read them), for an auditor to start from, not a certification claim.
+Likelihood and impact: 1 (low) to 3 (high), after the controls listed. "Test" names the check that proves the control works today.
+
+| # | Risk | L | I | Controls in place | Test / evidence | NIST AI RMF | ISO/IEC 42001 |
+|---|---|---|---|---|---|---|---|
+| R1 | A wrong price or date reaches a customer | 1 | 3 | Numbers only from code (ADR 0007); faithfulness check; human approval of every send; signed approval covers the exact prices; canaries test the reviewers | `test_s8_actions` (tampered prices refused), `test_s9_governance` (canaries) | MANAGE 2.2, MEASURE 2.5 | 8.3 (risk treatment), A.6.2.6 (AI system operation) |
+| R2 | Prompt injection makes the agent act for an attacker | 1 | 3 | Security gate (hidden text, Prompt Guard on body, PDF and DXF text), red banner → escalate, write tools need a signed approval | `tests/security/test_redteam.py` 1-3 | MEASURE 2.7, MANAGE 2.4 | A.6.2.4 (verification), A.7 (data) |
+| R3 | Customer or other customers' data leaks (to Groq, to another customer, into logs) | 2 | 2 | Gateway masks emails/phones/IBANs; Presidio in logs/traces; faithfulness check; export-controlled RFQs can stay local; retention | red team 6; `test_the_gateway_caps_tokens_and_masks_personal_data`; `test_export_controlled_rfqs_can_be_kept_off_external_llms` | MAP 4.1, MANAGE 2.2 | A.7.4 (data quality), A.8 (information for interested parties) |
+| R4 | Runaway cost (loops, token floods) | 1 | 2 | max_tokens per agent in the gateway; per-job budget; per-agent 30-day budget enforced by LiteLLM; alerts at 50/80/100 %; rate limits; recursion limit; cache | `test_a_runaway_agent_is_cut_off_by_its_budget` | MANAGE 2.3 | A.6.2.6 |
+| R5 | Reviewers rubber-stamp drafts | 2 | 3 | Canaries (5 % of jobs); per-reviewer edit rate and wait time; senior approval above the limit, for new customers and low margins | `GOVERNANCE_REPORT.md`, canary test | GOVERN 3.2, MEASURE 3.3 | A.3.2 (roles), 9.1 (monitoring) |
+| R6 | A model or prompt change silently degrades quality | 2 | 2 | Prompts and the model list versioned in Langfuse; `make check` fails on drift; promotion needs a named reviewer and a fresh eval report; cycle-time model promoted only if better | `test_prompts_and_the_model_list_match_their_production_versions`, `test_a_prompt_promotion_needs_fresh_evidence`, S8 model test | MEASURE 2.1, MANAGE 4.1 | 8.1 (operational control), A.6.2.5 (deployment) |
+| R7 | "Who approved this?" cannot be answered (W3) | 1 | 2 | Keycloak identities; hash-chained, append-only audit log of every LLM call, tool call, OPA decision, human decision and action; OPA decision log with ids | `test_the_audit_log_is_append_only_and_a_tampered_row_is_found` | GOVERN 1.4, MANAGE 4.3 | 7.5 (documented information), A.6.2.8 (event logs) |
+| R8 | The AI misbehaves and must be stopped now | 1 | 3 | Kill switch: OPA denies every AI step and every agent key is blocked; manual mode is the legacy process | `test_the_kill_switch_drops_everything_into_manual_mode_and_back` | MANAGE 2.4 | A.6.2.6, 10.2 (nonconformity) |
+| R9 | Policy or rules changed at runtime by a compromised service | 1 | 3 | OPA's API is query-only (`system.authz`); policies come only from the repo files | `test_no_service_can_rewrite_opa_at_runtime` | GOVERN 1.2 | A.2 (policies) |
+| R10 | A vulnerable dependency or image | 2 | 2 | Pinned wheels and images; pip-audit, bandit, trivy, SBOM in `make check` | `make supply-chain` | MAP 4.1 | A.10 (third-party relationships) |
+| R11 | Over-reliance on one external provider (Groq: quotas, outages, terms) | 2 | 2 | LiteLLM aliases make the provider swappable (vLLM/Ollama); jobs wait (quota) instead of failing; manual mode | S4 quota handling; kill switch | MAP 3.4, MANAGE 3.1 | A.10.3 (suppliers) |
+| R12 | Synthetic-history drift makes evaluations unstable | 2 | 1 | Reports regenerated per reset; tolerances; issues recorded honestly in PROGRESS.md | `test_s0_docs` baseline tolerance; S5 evals | MEASURE 2.13 | 9.1 |
+
+**Residual risks accepted by the client (for the prototype):** prompts with drawing text go to Groq (masked for personal data only); one lab password for the staff logins; Envoy's login cookie is scoped to `localhost`; the canary rate (5 %) is a starting point.

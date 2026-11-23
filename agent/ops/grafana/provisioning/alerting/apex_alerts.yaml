@@ -1,0 +1,88 @@
+# S10 basic alerts (Grafana unified alerting, provisioned from this file). Local only: they show in Grafana ->
+# Alerting -> Alert rules (firing / normal). ponytail: no contact point (email/Slack) in the lab; add one in S19.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: apex-s10
+    folder: Apex
+    interval: 1m
+    rules:
+      - uid: apex-queue-age
+        title: A job has waited more than 30 minutes to run
+        condition: C
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: The worker is behind or down (Groq quota waits are counted separately).
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: apex-pg
+            model:
+              refId: A
+              format: table
+              rawQuery: true
+              editorMode: code
+              rawSql: >-
+                SELECT coalesce(max(extract(epoch FROM now() - available_at) / 60), 0) AS minutes FROM jobs
+                WHERE status = 'queued' AND available_at <= now() AND coalesce(error, '') NOT LIKE 'QuotaExhausted%'
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model: {refId: C, type: threshold, expression: B, conditions: [{evaluator: {type: gt, params: [30]}}]}
+      - uid: apex-groq-errors
+        title: Groq errors or quota waits in the last hour
+        condition: C
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: LLM calls are failing or waiting for Groq's daily quota; jobs wait and retry (no data is lost).
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: apex-pg
+            model:
+              refId: A
+              format: table
+              rawQuery: true
+              editorMode: code
+              rawSql: >-
+                SELECT count(*) AS jobs FROM jobs WHERE error ~ '(QuotaExhausted|LiteLLM|NeedsHuman)'
+                AND available_at > now() - interval '1 hour'
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model: {refId: C, type: threshold, expression: B, conditions: [{evaluator: {type: gt, params: [0]}}]}
+      - uid: apex-budget
+        title: An agent crossed a budget threshold (50 / 80 / 100 %)
+        condition: C
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: See the AI Cost & Governance dashboard; at 100 % LiteLLM refuses that agent's calls.
+        data:
+          - refId: A
+            relativeTimeRange: {from: 86400, to: 0}
+            datasourceUid: apex-pg
+            model:
+              refId: A
+              format: table
+              rawQuery: true
+              editorMode: code
+              rawSql: SELECT count(*) AS alerts FROM budget_alerts WHERE at > now() - interval '24 hours'
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model: {refId: C, type: threshold, expression: B, conditions: [{evaluator: {type: gt, params: [0]}}]}

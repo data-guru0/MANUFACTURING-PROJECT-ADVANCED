@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block main %}
+<h1>Capacity: confirmed work + expected wins</h1>
+{% if not snap %}<div class="card muted">No snapshot yet: run <code>python -m apex_agent.costing.capacity</code> in the worker, or cost a job.</div>{% else %}
+<p class="small muted">Snapshot {{ at }} · per work center and week: confirmed work orders (Odoo, forward-loaded on the shift calendar)
+  + every open quote's planned minutes × its P(win) ({{ snap.open_quotes }} open quotes). Over 100 % = Apex would promise
+  the same machine time twice if the expected wins come in (W7).</p>
+<div class="card" style="overflow-x:auto">
+<table id="heatmap">
+  <tr><th>Work center</th>{% for w in snap.weeks %}<th class="num">{{ w[5:] }}</th>{% endfor %}</tr>
+  {% for wc, cells in snap.rows.items() %}
+  <tr><td><strong>{{ wc }}</strong></td>
+    {% for c in cells %}{% set p = c.pct if c.pct is not none else 0 %}
+    <td class="num" title="confirmed {{ c.confirmed }} + expected {{ c.expected }} of {{ c.capacity }} min"
+        style="background: {% if c.pct is none %}#f0f0f0{% elif p > 100 %}#f3b4ad{% elif p > 85 %}#f7d9a8{% elif p > 50 %}#fdf0c4{% else %}#e8f5ee{% endif %}">
+      {{ "–" if c.pct is none else c.pct ~ " %" }}{% if c.expected %}<br><span class="muted small">+{{ c.expected }}</span>{% endif %}</td>
+    {% endfor %}</tr>
+  {% endfor %}
+</table>
+</div>
+<p class="small muted">Cell: % of the week's shift minutes used. Grey "+N": minutes of expected wins in that week. Hover for the numbers.</p>
+{% endif %}
+{% endblock %}

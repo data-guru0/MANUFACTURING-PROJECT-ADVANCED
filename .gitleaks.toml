@@ -1,0 +1,14 @@
+# Secret scan for `make check`. Default rules, minus files that are git-ignored and hold secrets by design.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "git-ignored local secrets and generated data (never committed)"
+paths = [
+  '''(^|/)\.env$''',
+  '''(^|/)data/generated/''',
+  '''(^|/)\.venv/''',
+  '''(^|/)volumes/''',
+  '''(^|/)\.(mypy|ruff|pytest)_cache/''',
+  '''(^|/)\.git/''',
+]

@@ -1,0 +1,73 @@
+# Apex's SHOP STANDARDS for costing (S5): the physics of making a part, as Ramesh's calculator uses them
+# (Pricing_Calculator_v7_FINAL(2).xlsx on the share, sheets "Calculator" and "Materials", confirmed in S0 discovery).
+# Money is NOT here: rates and material prices are read live from Odoo; overhead, margins and terms are commercial
+# policy in policy.yaml -> pricing_policy (OPA data). Each value below is cited in every cost line that uses it.
+source: "Pricing_Calculator_v7_FINAL(2).xlsx (Apex share), reviewed with Ramesh in S0"
+
+stock:                       # blank = bounding box + allowance, rounded UP to a standard size
+  mill_allowance_mm: 3.0     # per side
+  turn_dia_allowance_mm: 3.0
+  turn_len_allowance_mm: 5.0
+  sheet_margin_mm: 10.0      # per side (nesting skeleton)
+  plate_mm: [3, 5, 6, 8, 10, 12, 16, 20, 25, 30, 40, 50, 60, 80, 100, 120, 150]
+  bar_dia_mm: [10, 12, 16, 20, 25, 30, 35, 40, 50, 60, 70, 80, 100, 120, 150, 160]
+  sheet_mm: [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0]
+  scrap_factor: {mill: 1.08, turn: 1.08, sheet: 1.15}
+
+# Standard times (planning baseline). The cycle-time model (S5) learns how actual times differ from these.
+times:
+  mrr_cm3_per_min:            # material removal rate
+    MAT-AL6061: 120.0
+    MAT-AL7075: 100.0
+    MAT-SS304: 25.0
+    MAT-SS316: 20.0
+    MAT-1018: 40.0
+    MAT-S235: 45.0
+    MAT-C360: 140.0
+    MAT-POM: 180.0
+    MAT-TI64: 15.0
+  min_per_hole: 0.5
+  min_per_thread: 0.8
+  min_per_pocket: 3.0
+  handling_min_per_setup: 2.0
+  laser_base_speed_mm_min_x_thickness: 6000.0   # cut speed = this / thickness x material factor
+  laser_cut_factor: {MAT-S235: 1.0, MAT-1018: 1.0, MAT-SS304: 0.7, MAT-SS316: 0.7, MAT-AL6061: 0.8}
+  laser_min_per_pierce: 0.05
+  brake_min_per_bend: 0.5
+  saw_min_per_part: 1.5
+  deburr_min_per_part: 1.0
+  deburr_min_per_feature: 0.1
+  # loose -> tight: the first threshold the value reaches gives the factor
+  tolerance_factor: [[0.1, 1.0], [0.05, 1.15], [0.02, 1.35], [0.01, 1.6], [0.005, 2.2], [0.0, 3.0]]
+  ra_factor: [[3.2, 1.0], [1.6, 1.15], [0.8, 1.35], [0.4, 1.7], [0.0, 2.2]]
+  cmm_min_per_feature: 0.5     # inspection: (holes + threads + pockets + 4) features
+  cmm_sample_rate: 0.10        # 10 % of the lot + the first article
+  cmm_when_tolerance_mm: 0.02  # CMM only when the tightest tolerance is this or tighter
+
+# How Apex makes each part family (process, routing, setups). A drawing's title names the family.
+families:
+  l_bracket:       {title: ["L-BRACKET"], process: mill, routing: [SAW, MILL3], setups: 2}
+  u_bracket:       {title: ["U-BRACKET"], process: mill, routing: [SAW, MILL3], setups: 2}
+  flanged_housing: {title: ["FLANGED HOUSING", "HOUSING"], process: mill, routing: [SAW, MILL3], setups: 3}
+  spur_gear:       {title: ["SPUR GEAR", "GEAR"], process: turn, routing: [SAW, LATHE, MILL3], setups: 2}
+  keyed_shaft:     {title: ["SHAFT WITH KEYWAY", "SHAFT"], process: turn, routing: [SAW, LATHE, MILL3], setups: 2}
+  spacer:          {title: ["SPACER", "BUSHING"], process: turn, routing: [SAW, LATHE], setups: 1}
+  mounting_plate:  {title: ["MOUNTING PLATE", "PLATE"], process: mill, routing: [SAW, MILL3], setups: 2}
+  sheet_panel:     {title: ["SHEET-METAL PANEL", "SHEET METAL", "PANEL"], process: sheet, routing: [LASER], setups: 1}
+five_axis_when:              # the 5-axis mill instead of the 3-axis one
+  setups_at_least: 3
+  tolerance_at_most_mm: 0.01
+outside_process_lot_min_usd:  # the finisher's minimum charge per lot (from their price sheets)
+  OSP-ANODIZE: 150.0
+  OSP-PLATING: 120.0
+  OSP-POWDER: 200.0
+  OSP-PASSIVATE: 120.0
+  OSP-HEATTREAT: 180.0
+
+# The public commodity price series behind the price-protection clause (S5, W8). Verified 2026-11-21:
+# the workbook exists, sheet "Monthly Prices", series in row 5, units in row 6, months as 2026M10 in column A.
+commodity_index:
+  url: https://thedocs.worldbank.org/en/doc/74e8be41ceb20fa0da750cda2f6b9e4e-0050012026/related/CMO-Historical-Data-Monthly.xlsx
+  publisher: "World Bank Commodity Price Data (The Pink Sheet), monthly prices in nominal US dollars"
+  sheet: Monthly Prices
+  series: [Aluminum, Copper, Nickel, Zinc, "Iron ore, cfr spot"]

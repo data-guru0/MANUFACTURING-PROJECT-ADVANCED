@@ -1,0 +1,642 @@
+{
+ "uid": "apex-inbox-triage",
+ "title": "Inbox to review (S3-S6)",
+ "tags": [
+  "apex",
+  "S3"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 41,
+ "refresh": "10s",
+ "time": {
+  "from": "now-7d",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "title": "Jobs by status",
+   "type": "stat",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 8,
+    "h": 5
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT status, count(*) AS jobs FROM jobs GROUP BY status ORDER BY status",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": true
+    },
+    "colorMode": "background",
+    "textMode": "value_and_name"
+   }
+  },
+  {
+   "id": 2,
+   "title": "Triage",
+   "type": "stat",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 0,
+    "w": 10,
+    "h": 5
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT coalesce(triage, '(waiting)') AS category, count(*) AS emails FROM jobs j LEFT JOIN gate_results g USING (email_id) GROUP BY 1 ORDER BY 2 DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": true
+    },
+    "colorMode": "background",
+    "textMode": "value_and_name"
+   }
+  },
+  {
+   "id": 3,
+   "title": "Red banners (need a human)",
+   "type": "stat",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 18,
+    "y": 0,
+    "w": 6,
+    "h": 5
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT count(*) FILTER (WHERE red_banner) AS \"red banner\", count(*) FILTER (WHERE needs_human) AS \"needs human\" FROM gate_results",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": true
+    },
+    "colorMode": "background",
+    "textMode": "value_and_name"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "red"
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 4,
+   "title": "Inbox (newest first): one job per email",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 5,
+    "w": 24,
+    "h": 14
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT e.id AS email, e.ingested_at AS received, e.from_name AS sender, e.from_addr AS address, e.subject,\n  j.status AS job, g.triage, round(g.triage_confidence::numeric, 2) AS confidence, g.language,\n  CASE WHEN g.red_banner THEN 'RED: ' || array_to_string(ARRAY(SELECT jsonb_array_elements_text(g.reasons)), ' | ') ELSE 'ok' END AS security,\n  round(g.injection_score::numeric, 3) AS prompt_guard, e.thread_id AS thread, e.duplicate_of, g.trace_id AS langfuse_trace\nFROM emails e JOIN jobs j ON j.email_id = e.id LEFT JOIN gate_results g ON g.email_id = e.id ORDER BY e.id DESC LIMIT 300",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "security"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       },
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "type": "regex",
+          "options": {
+           "pattern": "^RED.*",
+           "result": {
+            "color": "red",
+            "index": 0
+           }
+          }
+         },
+         {
+          "type": "value",
+          "options": {
+           "ok": {
+            "color": "green",
+            "index": 1
+           }
+          }
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 5,
+   "title": "Quarantined files (MinIO quarantine/)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 19,
+    "w": 24,
+    "h": 7
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT a.email_id AS email, a.filename, a.claimed_type AS \"email says\", a.true_type AS \"really is\",\n  array_to_string(ARRAY(SELECT jsonb_array_elements_text(a.reasons)), ' | ') AS reasons, a.sha256\nFROM attachments a WHERE a.verdict = 'quarantined' ORDER BY a.id DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ]
+  },
+  {
+   "id": 6,
+   "title": "Hidden text found (never passed to the model)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 26,
+    "w": 24,
+    "h": 7
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT g.email_id AS email, h->>'where' AS \"where\", h->>'text' AS \"text (redacted)\"\nFROM gate_results g, jsonb_array_elements(g.hidden_text) h ORDER BY g.email_id DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ]
+  },
+  {
+   "id": 10,
+   "title": "Extraction (S4)",
+   "type": "stat",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 33,
+    "w": 24,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT count(*) AS \"RFQ emails read\", sum(parts) AS parts, count(*) FILTER (WHERE needs_human > 0) AS \"need a person\",\n  count(*) FILTER (WHERE clarification > 0) AS \"ask the customer\", count(*) FILTER (WHERE route = 'senior') AS \"senior (export control)\"\nFROM extractions",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": true
+    },
+    "colorMode": "background",
+    "textMode": "value_and_name"
+   }
+  },
+  {
+   "id": 11,
+   "title": "Parts read from drawings and emails (value · source · confidence)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 37,
+    "w": 24,
+    "h": 12
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT x.email_id AS email, p->>'part_code' AS part,\n  p->'fields'->'material_code'->>'value' AS material, p->'fields'->'material_code'->>'source' AS \"material from\",\n  p->'fields'->'envelope_mm'->>'value' AS \"size mm (L, W, H)\", p->'fields'->'envelope_mm'->>'source' AS \"size from\",\n  round((p->'fields'->'envelope_mm'->>'confidence')::numeric, 2) AS \"size conf\",\n  coalesce(p->'fields'->'holes_count'->>'value', '') || CASE WHEN p->'fields'->'hole_dia_mm'->>'value' IS NOT NULL THEN ' x Ø' || (p->'fields'->'hole_dia_mm'->>'value') ELSE '' END AS holes,\n  p->'fields'->'thread_size'->>'value' AS thread, p->'fields'->'tightest_tolerance_mm'->>'value' AS \"tightest tol\",\n  p->'fields'->'ra_um'->>'value' AS \"Ra\", p->>'quantities' AS quantities,\n  (SELECT string_agg(k, ', ') FROM jsonb_each(p->'fields') f(k, v) WHERE (v->>'needs_human')::boolean) AS \"a person checks\"\nFROM extractions x, jsonb_array_elements(x.result->'parts') p ORDER BY x.email_id DESC, part",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ]
+  },
+  {
+   "id": 12,
+   "title": "The email: requirements, language, route",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 49,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT x.email_id AS email, x.language, x.result->'requirements'->'requested_date'->>'value' AS \"date\",\n  x.result->'requirements'->'certificates'->>'value' AS certificates, x.result->'requirements'->'incoterms'->>'value' AS incoterms,\n  x.result->'requirements'->'co2_requested'->>'value' AS \"CO2?\", x.result->'requirements'->'export_control'->>'value' AS \"export control\",\n  x.route, x.llm_calls AS \"LLM calls\"\nFROM extractions x ORDER BY x.email_id DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ]
+  },
+  {
+   "id": 13,
+   "title": "Questions for the customer (a draft email; nothing is sent without approval)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 57,
+    "w": 24,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT x.email_id AS email, q AS question\nFROM extractions x, jsonb_array_elements_text(x.result->'clarification') q ORDER BY x.email_id DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ]
+  },
+  {
+   "id": 20,
+   "title": "Estimates (S5): price per break, delivery date, CO2, terms - computed by code, no LLM",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 63,
+    "w": 24,
+    "h": 10
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT s.email_id AS email, s.part_code AS part,\n  (SELECT string_agg(b->>'qty' || ' pcs: $' || (b->>'unit_price'), ' | ') FROM jsonb_array_elements(s.result->'breaks') b) AS \"price breaks\",\n  s.result->'delivery'->>'committed' AS committed, s.result->'delivery'->>'p50' AS p50, s.result->'delivery'->>'rush' AS rush,\n  s.result->'delivery'->>'bottleneck' AS bottleneck, s.result->'co2'->>'per_part_kg' AS \"kg CO2e/part\",\n  s.result->'terms'->>'validity_date' AS \"valid until\", s.result->'terms'->'index'->>'series' AS \"price index\",\n  array_to_string(ARRAY(SELECT jsonb_array_elements_text(s.result->'flags')), ' | ') AS flags\nFROM estimates s ORDER BY s.email_id DESC, part",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ]
+  },
+  {
+   "id": 21,
+   "title": "Cost lines of the latest estimate (every number with its source)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 73,
+    "w": 24,
+    "h": 10
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT l->>'name' AS line, round((l->>'amount')::numeric, 4) AS \"$ per part\", l->>'provenance' AS source\nFROM (SELECT result FROM estimates ORDER BY created_at DESC LIMIT 1) s, jsonb_array_elements(s.result->'breaks'->0->'lines') l",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ]
+  },
+  {
+   "id": 22,
+   "title": "CO2 lines of the latest estimate (factor, calculation, citation)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 83,
+    "w": 24,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT c->>'name' AS contribution, c->>'kg_co2e' AS \"kg CO2e\", c->>'calc' AS calculation, c->>'source' AS source, c->>'status' AS status\nFROM (SELECT result FROM estimates ORDER BY created_at DESC LIMIT 1) s, jsonb_array_elements(s.result->'co2'->'lines') c\nUNION ALL SELECT 'excluded', '', e, 'no citable factor: ask the supplier', '' FROM (SELECT result FROM estimates ORDER BY created_at DESC LIMIT 1) s,\n  jsonb_array_elements_text(s.result->'co2'->'excluded') e",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ]
+  },
+  {
+   "id": 30,
+   "title": "Waiting for review (S6: the graph is paused at human_review; nothing is sent without a person)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 89,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT j.email_id AS email, e.from_name AS customer, e.subject, j.finished_at AS since,\n  (SELECT string_agg(DISTINCT s.part_code, ', ') FROM estimates s WHERE s.email_id = j.email_id) AS parts,\n  round((SELECT sum(spent_usd) FROM graph_events ge WHERE ge.email_id = j.email_id)::numeric, 5) AS \"LLM $\"\nFROM jobs j JOIN emails e ON e.id = j.email_id WHERE j.status = 'awaiting_review' ORDER BY j.email_id DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ]
+  },
+  {
+   "id": 31,
+   "title": "Graph steps per job (every finished node; a resumed job never repeats one)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 97,
+    "w": 12,
+    "h": 12
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT ge.email_id AS email, ge.node, ge.at, round(ge.spent_usd::numeric, 5) AS \"LLM $\"\nFROM graph_events ge WHERE ge.email_id IN (SELECT email_id FROM graph_events ORDER BY id DESC LIMIT 60) ORDER BY ge.email_id DESC, ge.id",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ]
+  },
+  {
+   "id": 32,
+   "title": "Decisions (who decided what, and why)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 97,
+    "w": 12,
+    "h": 12
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT d.email_id AS email, d.action, d.decided_by AS by, d.reason, d.decided_at AS at,\n  (SELECT count(*) FROM feedback f WHERE f.email_id = d.email_id) AS edits\nFROM decisions d ORDER BY d.decided_at DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ]
+  },
+  {
+   "title": "Audit log (S9): every LLM call, tool call, OPA decision, human decision and action, hash-chained",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 109,
+    "w": 24,
+    "h": 12
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT id, at, kind, actor, email_id AS email,\n  coalesce(data->>'event', data->>'rule', data->>'tool', data->>'alias', data->>'approved_action') AS what,\n  coalesce(data->>'decision_id', data->>'call_id', data->>'message_id', '') AS ref,\n  left(prev_hash, 10) AS prev, left(hash, 10) AS hash\nFROM audit_log ORDER BY id DESC LIMIT 200",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ]
+  },
+  {
+   "title": "Audit log: rows per kind (S9)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 121,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT kind, count(*) AS rows, max(at) AS latest FROM audit_log GROUP BY kind ORDER BY rows DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ]
+  },
+  {
+   "title": "Budget alerts (S9): 50 / 80 / 100 % of an agent's 30-day budget",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 121,
+    "w": 16,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT at, agent, threshold AS pct, round(spend_usd::numeric, 4) AS spend_usd, budget_usd FROM budget_alerts ORDER BY at DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ]
+  }
+ ]
+}

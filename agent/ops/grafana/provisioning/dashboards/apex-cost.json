@@ -1,0 +1,231 @@
+{
+ "uid": "apex-cost",
+ "title": "Apex · AI Cost & Governance",
+ "tags": [
+  "apex",
+  "s10"
+ ],
+ "timezone": "browser",
+ "refresh": "1m",
+ "schemaVersion": 39,
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "title": "LLM spend per day by agent ($)",
+   "type": "timeseries",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT date_trunc('day', at) AS time, actor AS metric, sum((data->>'cost_usd')::float) AS usd FROM audit_log\n                 WHERE kind = 'llm_call' AND $__timeFilter(at) GROUP BY 1, 2 ORDER BY 1",
+     "format": "time_series",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "id": 1
+  },
+  {
+   "title": "LLM spend per job reaching review ($, median)",
+   "type": "stat",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 6,
+    "h": 8,
+    "x": 12,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY s) FROM (SELECT sum(spent_usd) AS s FROM graph_events\n                 WHERE email_id IN (SELECT email_id FROM review_items) GROUP BY email_id) x",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "id": 2
+  },
+  {
+   "title": "Calls answered from the cache, %",
+   "type": "stat",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 6,
+    "h": 8,
+    "x": 18,
+    "y": 0
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT round(100 * avg((data->>'cache_hit')::boolean::int), 1) FROM audit_log WHERE kind = 'llm_call' AND $__timeFilter(at)",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "id": 3
+  },
+  {
+   "title": "Budget alerts (50 / 80 / 100 %)",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT at, agent, threshold AS pct, round(spend_usd::numeric, 4) AS spend_usd, budget_usd FROM budget_alerts ORDER BY at DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 4
+  },
+  {
+   "title": "Kill switch and other admin actions",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT at, actor AS by, data->>'event' AS event, data->>'reason' AS reason FROM audit_log WHERE kind = 'admin' ORDER BY id DESC LIMIT 30",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 5
+  },
+  {
+   "title": "OPA denials in the last 24 h, by rule",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 16
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT data->>'rule' AS rule, count(*) AS denials FROM audit_log WHERE kind = 'opa_decision' AND at > now() - interval '24 hours'\n                 AND (data->>'result' IN ('false', 'deny') OR data->'result'->>'allow' = 'false') GROUP BY 1 ORDER BY 2 DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 6
+  },
+  {
+   "title": "Audit log rows per kind",
+   "type": "table",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "apex-pg"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 16
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "apex-pg"
+     },
+     "rawSql": "SELECT kind, count(*) AS rows, max(at) AS latest FROM audit_log GROUP BY kind ORDER BY rows DESC",
+     "format": "table",
+     "rawQuery": true,
+     "editorMode": "code"
+    }
+   ],
+   "id": 7
+  }
+ ]
+}

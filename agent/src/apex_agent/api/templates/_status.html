@@ -1,0 +1,11 @@
+{% if status in ("decided", "running") %}
+<div class="msg ok" id="result" hx-get="/jobs/{{ email_id }}/status" hx-trigger="load delay:2s" hx-swap="outerHTML">
+  {% if decision %}Your <strong>{{ decision.action }}</strong> is queued.{% endif %} The worker is applying it…
+</div>
+{% elif status == "awaiting_review" and error and error.startswith("decision refused") %}
+<div class="msg bad" id="result"><strong>Not done:</strong> {{ error }}</div>
+{% elif status == "awaiting_review" %}
+<div class="msg ok" id="result">Re-costed: the job is back for review with the new numbers. <a href="/jobs/{{ email_id }}">Reload</a>{% if error %}<div class="small">{{ error }}</div>{% endif %}</div>
+{% else %}
+<div class="msg ok" id="result">Done: the job is <strong>{{ status }}</strong>. <a href="/jobs/{{ email_id }}">Reload</a> · <a href="/">Back to the queue</a></div>
+{% endif %}
